@@ -1,0 +1,6 @@
+# /etc/acpi/events/powerbtn-custom
+# ACPI event handler for power button (key 116) deep sleep toggle
+# Copy this file to /etc/acpi/events/powerbtn-custom
+
+event=button/power
+action=/usr/local/bin/powerbtn-deepsleep.sh

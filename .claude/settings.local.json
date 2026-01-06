@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod:*)",
+      "Bash(sudo /home/pi/pideepsleep/install.sh:*)",
+      "Bash(systemctl status:*)",
+      "Bash(echo:*)",
+      "Bash(pgrep:*)",
+      "Bash(cat:*)",
+      "Bash(sudo mv:*)",
+      "Bash(sudo pkill -f \"systemd-inhibit.*handle-power-key\")",
+      "Bash(sudo systemctl restart:*)"
+    ]
+  }
+}
