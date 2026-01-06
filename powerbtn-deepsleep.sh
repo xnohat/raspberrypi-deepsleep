@@ -6,10 +6,66 @@
 # Don't use set -e as we want to continue even if some commands fail
 
 STATE_FILE="/tmp/pi-deepsleep-state"
+STOPPED_PIDS_FILE="/tmp/pi-deepsleep-stopped-pids"
 LOG_FILE="/var/log/pi-deepsleep.log"
+
+# Processes that must NEVER be stopped (regex patterns)
+# Kernel threads, init, systemd core, display, input handlers, this script
+EXCLUDE_PATTERNS="^(systemd|init|kthreadd|kworker|rcu_|migration|watchdog|ksoftirqd|cpuhp|idle_inject)"
+EXCLUDE_PATTERNS+="|^(Xorg|Xwayland|weston|labwc|openbox|lxsession|lxpanel|pcmanfm)"
+EXCLUDE_PATTERNS+="|^(acpid|dbus|polkit|login|getty|agetty|sshd|ssh-agent)"
+EXCLUDE_PATTERNS+="|^(irq/|i2c-|spi-|mmc-|usb-|input-|hid-)"
+EXCLUDE_PATTERNS+="|^(bash|sh|dash|zsh)$"
+EXCLUDE_PATTERNS+="|powerbtn-deepsleep"
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+# Freeze non-essential user processes with SIGSTOP
+freeze_processes() {
+    log "Freezing non-essential processes..."
+    local count=0
+    > "$STOPPED_PIDS_FILE"  # Clear file
+
+    # Get all user processes (not kernel threads)
+    while read -r pid comm; do
+        # Skip kernel threads (PPID 2 or comm in brackets)
+        [[ "$comm" == \[*\] ]] && continue
+
+        # Skip if matches exclude patterns
+        echo "$comm" | grep -qE "$EXCLUDE_PATTERNS" && continue
+
+        # Skip PID 1, 2 and our own process tree
+        [[ "$pid" -le 2 ]] && continue
+        [[ "$pid" -eq $$ ]] && continue
+        [[ "$pid" -eq $PPID ]] && continue
+
+        # Send SIGSTOP and record if successful
+        if kill -STOP "$pid" 2>/dev/null; then
+            echo "$pid" >> "$STOPPED_PIDS_FILE"
+            ((count++))
+        fi
+    done < <(ps -eo pid=,comm= --no-headers 2>/dev/null)
+
+    log "Frozen $count processes"
+}
+
+# Resume frozen processes with SIGCONT
+thaw_processes() {
+    log "Thawing frozen processes..."
+    local count=0
+
+    if [ -f "$STOPPED_PIDS_FILE" ]; then
+        while read -r pid; do
+            if kill -CONT "$pid" 2>/dev/null; then
+                ((count++))
+            fi
+        done < "$STOPPED_PIDS_FILE"
+        rm -f "$STOPPED_PIDS_FILE"
+    fi
+
+    log "Thawed $count processes"
 }
 
 # Aggressive power saving - enter deep sleep
@@ -58,12 +114,18 @@ enter_deep_sleep() {
     # Sync filesystems
     sync
 
+    # Freeze non-essential processes (last step - most aggressive)
+    freeze_processes
+
     log "Deep sleep mode active"
 }
 
 # Exit deep sleep - restore normal operation
 exit_deep_sleep() {
     log "Exiting deep sleep mode..."
+
+    # Thaw processes first (restore them before anything else)
+    thaw_processes
 
     # Clear state
     rm -f "$STATE_FILE"
