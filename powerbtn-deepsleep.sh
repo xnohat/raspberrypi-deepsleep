@@ -26,10 +26,11 @@ log() {
 freeze_processes() {
     log "Freezing non-essential processes..."
     local count=0
+    local skipped_tty=0
     > "$STOPPED_PIDS_FILE"  # Clear file
 
-    # Get all user processes (not kernel threads)
-    while read -r pid comm; do
+    # Get all user processes (not kernel threads) with TTY info
+    while read -r pid tty comm; do
         # Skip kernel threads (PPID 2 or comm in brackets)
         [[ "$comm" == \[*\] ]] && continue
 
@@ -41,14 +42,21 @@ freeze_processes() {
         [[ "$pid" -eq $$ ]] && continue
         [[ "$pid" -eq $PPID ]] && continue
 
+        # Skip processes with a controlling terminal (interactive processes)
+        # These can't resume properly due to job control (SIGTTIN/SIGTTOU)
+        if [[ "$tty" != "?" ]]; then
+            ((skipped_tty++))
+            continue
+        fi
+
         # Send SIGSTOP and record if successful
         if kill -STOP "$pid" 2>/dev/null; then
             echo "$pid" >> "$STOPPED_PIDS_FILE"
             ((count++))
         fi
-    done < <(ps -eo pid=,comm= --no-headers 2>/dev/null)
+    done < <(ps -eo pid=,tty=,comm= --no-headers 2>/dev/null)
 
-    log "Frozen $count processes"
+    log "Frozen $count processes (skipped $skipped_tty with tty)"
 }
 
 # Resume frozen processes with SIGCONT
