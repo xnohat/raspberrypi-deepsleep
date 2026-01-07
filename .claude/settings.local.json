@@ -8,8 +8,8 @@
       "Bash(pgrep:*)",
       "Bash(cat:*)",
       "Bash(sudo mv:*)",
-      "Bash(sudo pkill -f \"systemd-inhibit.*handle-power-key\")",
-      "Bash(sudo systemctl restart:*)"
+      "Bash(sudo systemctl restart:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
