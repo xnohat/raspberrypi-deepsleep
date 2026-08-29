@@ -175,10 +175,11 @@ enter_deep_sleep() {
     echo "sleeping" > "$STATE_FILE"
     > "$SAVED_STATE_FILE"
 
-    # Turn the panel off first (biggest single power win, instant feedback)
-    panel_off
+    # NOTE: panel is NOT touched here — the device has a dedicated screen
+    # button, and DPI panel off->on has a known flicker bug (see upstream).
+    # User turns the screen off manually.
 
-    # Unbind touch controller (no input needed with panel off)
+    # Unbind touch controller (no input needed while sleeping)
     if [ -e "$TOUCH_DRIVER/$TOUCH_I2C_DEV" ]; then
         echo "$TOUCH_I2C_DEV" > "$TOUCH_DRIVER/unbind" 2>/dev/null && log "Touch unbound"
     fi
@@ -304,9 +305,6 @@ exit_deep_sleep() {
     if [ -d "$TOUCH_DRIVER" ] && [ ! -e "$TOUCH_DRIVER/$TOUCH_I2C_DEV" ]; then
         echo "$TOUCH_I2C_DEV" > "$TOUCH_DRIVER/bind" 2>/dev/null && log "Touch rebound"
     fi
-
-    # Panel back on
-    panel_on
 
     # Re-enable LEDs
     echo mmc0 > /sys/class/leds/ACT/trigger 2>/dev/null || true
