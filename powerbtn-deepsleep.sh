@@ -33,7 +33,8 @@ EXCLUDE_PATTERNS+="|polkit|^(wf-panel|pipewire|wireplumber|seatd|squeekboard|kan
 EXCLUDE_PATTERNS+="|^(acpid|dbus|polkit|login|getty|agetty|sshd|ssh-agent)"
 EXCLUDE_PATTERNS+="|^(irq/|i2c-|spi-|mmc-|usb-|input-|hid-)"
 EXCLUDE_PATTERNS+="|^(bash|sh|dash|zsh)$"
-EXCLUDE_PATTERNS+="|powerbtn-deepsleep"
+# NOTE: ps comm truncates to 15 chars ("deepsleep-watch"), match prefixes
+EXCLUDE_PATTERNS+="|powerbtn-deepsl|deepsleep-|battery-log"
 # Keep the AI agent gateway alive so the machine stays reachable in sleep
 if [ "$KEEP_AGENT" = "1" ]; then
     EXCLUDE_PATTERNS+="|openclaw|aicoworker|crawbot"
