@@ -166,7 +166,19 @@ fan_restore() {
     rm -f "$WATCHDOG_PID_FILE"
     # Give fan back to kernel thermal governor
     echo 2 > "$fh/pwm1_enable" 2>/dev/null
-    log "Fan restored to auto thermal control"
+    # Kick: the CM5 thermal zone is interrupt-driven — the governor only
+    # re-evaluates on a trip-point crossing. After sleep the temperature can
+    # sit BETWEEN trips, leaving cooling state stuck at 0 (fan off at 68C!).
+    # Seed the correct state for the current temperature; governor takes over
+    # at the next crossing.
+    t=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
+    st=0
+    [ "$t" -ge 55000 ] && st=1
+    [ "$t" -ge 65000 ] && st=2
+    [ "$t" -ge 72000 ] && st=3
+    [ "$t" -ge 78000 ] && st=4
+    echo "$st" > /sys/class/thermal/cooling_device0/cur_state 2>/dev/null
+    log "Fan restored to auto thermal control (seeded state $st for temp $t)"
 }
 
 # Aggressive power saving - enter deep sleep
