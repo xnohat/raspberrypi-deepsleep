@@ -219,17 +219,20 @@ enter_deep_sleep() {
     done
     log "USB + PCIe/NVMe runtime PM enabled"
 
-    # Offline all CPU cores except cpu0
-    for cpu in /sys/devices/system/cpu/cpu[1-9]/online; do
-        [ -f "$cpu" ] && echo 0 > "$cpu" 2>/dev/null || true
-    done
-    log "CPU cores 1+ offline"
-
-    # Set remaining CPU to powersave governor
+    # NOTE: do NOT offline CPU cores — on CM5 PSCI CPU_ON fails (-22) and
+    # cores stay dead until reboot. Use governor + freq cap instead.
     for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
         [ -f "$cpu" ] && echo "powersave" > "$cpu" 2>/dev/null || true
     done
-    log "CPU set to powersave"
+    # Cap max frequency to minimum available (restored on wake)
+    minfreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null)
+    if [ -n "$minfreq" ]; then
+        echo "maxfreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)" >> "$SAVED_STATE_FILE"
+        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+            [ -f "$cpu" ] && echo "$minfreq" > "$cpu" 2>/dev/null || true
+        done
+    fi
+    log "CPU set to powersave + freq capped to ${minfreq}"
 
     # Stop the fan + start thermal watchdog
     fan_off_with_watchdog
@@ -322,7 +325,22 @@ exit_deep_sleep() {
 }
 
 # Main logic - toggle between states
+# flock: serialize + debounce so double button events can't race two toggles
 main() {
+    exec 9>/tmp/pi-deepsleep.lock
+    if ! flock -n 9; then
+        log "Another toggle already running - ignoring this press"
+        exit 0
+    fi
+    # Debounce: ignore presses within 3s of the last accepted one
+    now=$(date +%s)
+    last=$(cat /tmp/pi-deepsleep-lastpress 2>/dev/null || echo 0)
+    if [ $((now - last)) -lt 3 ]; then
+        log "Debounce: press within 3s of previous - ignored"
+        exit 0
+    fi
+    echo "$now" > /tmp/pi-deepsleep-lastpress
+
     if [ -f "$STATE_FILE" ] && [ "$(cat "$STATE_FILE")" = "sleeping" ]; then
         exit_deep_sleep
     else
