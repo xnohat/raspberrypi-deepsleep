@@ -28,6 +28,8 @@ TOUCH_DRIVER="/sys/bus/i2c/drivers/edt_ft5x06"
 # Kernel threads, init, systemd core, display, input handlers, this script
 EXCLUDE_PATTERNS="^(systemd|init|kthreadd|kworker|rcu_|migration|watchdog|ksoftirqd|cpuhp|idle_inject)"
 EXCLUDE_PATTERNS+="|^(Xorg|Xwayland|weston|labwc|openbox|lxsession|lxpanel|pcmanfm)"
+# UI-critical helpers: freezing these hangs input/compositor (polkit agent modal grab!)
+EXCLUDE_PATTERNS+="|polkit|^(wf-panel|pipewire|wireplumber|seatd|squeekboard|kanshi|swayidle|wlopm|xdg-desktop)"
 EXCLUDE_PATTERNS+="|^(acpid|dbus|polkit|login|getty|agetty|sshd|ssh-agent)"
 EXCLUDE_PATTERNS+="|^(irq/|i2c-|spi-|mmc-|usb-|input-|hid-)"
 EXCLUDE_PATTERNS+="|^(bash|sh|dash|zsh)$"
