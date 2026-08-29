@@ -50,6 +50,30 @@ fan_hwmon_dir() {
     return 1
 }
 
+# Seed cooling state for current temp (interrupt-driven zone won't re-evaluate
+# until the next trip crossing, so after manual pwm changes the fan can stay
+# stuck off between trips)
+seed_cooling_state() {
+    local t st
+    t=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
+    st=0
+    [ "$t" -ge 55000 ] && st=1
+    [ "$t" -ge 65000 ] && st=2
+    [ "$t" -ge 72000 ] && st=3
+    [ "$t" -ge 78000 ] && st=4
+    echo "$st" > /sys/class/thermal/cooling_device0/cur_state 2>/dev/null
+}
+
+# Fail-safe: on any unexpected exit while entering/being in sleep, give the
+# fan back to the kernel and seed a sane state.
+restore_fan_failsafe() {
+    local fh
+    fh=$(fan_hwmon_dir) || return 0
+    echo 2 > "$fh/pwm1_enable" 2>/dev/null
+    seed_cooling_state
+}
+trap restore_fan_failsafe TERM INT
+
 # Freeze non-essential user processes with SIGSTOP
 freeze_processes() {
     log "Freezing non-essential processes..."
@@ -150,12 +174,15 @@ while [ -f "\$SF" ]; do
 done
 WDEOF
     chmod +x /tmp/deepsleep-watchdog.sh
-    if systemd-run --unit=deepsleep-watchdog --collect --quiet /tmp/deepsleep-watchdog.sh 2>/dev/null; then
+    systemd-run --unit=deepsleep-watchdog --collect --quiet /tmp/deepsleep-watchdog.sh 2>/dev/null
+    sleep 0.5
+    if systemctl is-active deepsleep-watchdog.service >/dev/null 2>&1; then
         log "Thermal watchdog started (systemd unit deepsleep-watchdog, threshold ${WATCHDOG_TEMP}mC)"
     else
-        # Fail-safe: no watchdog -> no fan-off
+        # Fail-safe: watchdog not RUNNING -> no fan-off allowed
         echo 2 > "$fh/pwm1_enable" 2>/dev/null
-        log "WARNING: watchdog failed to start — fan left in auto mode"
+        seed_cooling_state
+        log "WARNING: watchdog not active — fan left in auto mode"
     fi
 }
 
@@ -166,19 +193,8 @@ fan_restore() {
     rm -f "$WATCHDOG_PID_FILE"
     # Give fan back to kernel thermal governor
     echo 2 > "$fh/pwm1_enable" 2>/dev/null
-    # Kick: the CM5 thermal zone is interrupt-driven — the governor only
-    # re-evaluates on a trip-point crossing. After sleep the temperature can
-    # sit BETWEEN trips, leaving cooling state stuck at 0 (fan off at 68C!).
-    # Seed the correct state for the current temperature; governor takes over
-    # at the next crossing.
-    t=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
-    st=0
-    [ "$t" -ge 55000 ] && st=1
-    [ "$t" -ge 65000 ] && st=2
-    [ "$t" -ge 72000 ] && st=3
-    [ "$t" -ge 78000 ] && st=4
-    echo "$st" > /sys/class/thermal/cooling_device0/cur_state 2>/dev/null
-    log "Fan restored to auto thermal control (seeded state $st for temp $t)"
+    seed_cooling_state
+    log "Fan restored to auto thermal control (cooling state seeded)"
 }
 
 # Aggressive power saving - enter deep sleep
