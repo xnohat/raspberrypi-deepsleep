@@ -24,41 +24,30 @@ for i in $(seq 1 30); do
 done
 sleep 2
 
-# ── 1. tmux sessions: rebuild windows/panes with saved cwd + RE-RUN commands ──
-# Safe-to-rerun allowlist: monitors/viewers/connections. Anything else
-# (editors with unsaved state, rm, dd, builds...) is typed but NOT executed —
-# user just presses Enter to confirm.
-rerun_safe() {
-    case "$1" in
-        btop*|htop*|top*|watch\ *|tail\ *|journalctl*|dmesg*|ssh\ *|mosh\ *|ping\ *|tmux\ *) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-if [ -f "$STATE_DIR/tmux-panes.txt" ]; then
-    while IFS='|' read -r sess win wname pane cwd cmd fullcmd; do
+# ── 1. tmux sessions: rebuild via JSON manifest (tmux-state.py) ──
+# Auto-runs strictly read-only TUIs (btop/htop/top); everything else is
+# prefilled shlex-quoted for the user to confirm with Enter.
+if [ -f "$STATE_DIR/tmux-state.json" ]; then
+    if python3 /usr/local/bin/tmux-state.py restore "$STATE_DIR/tmux-state.json" >> "$LOG" 2>&1; then
+        log "tmux sessions rebuilt (JSON manifest)"
+    else
+        log "tmux restore PARTIAL (see above)"
+    fi
+elif [ -f "$STATE_DIR/tmux-panes.txt" ]; then
+    # legacy fallback: layout+cwd only
+    while IFS='|' read -r sess win wname pane cwd cmd _; do
         [ -d "$cwd" ] || cwd="$HOME"
         target="${sess}:${win}"
         if ! tmux has-session -t "$sess" 2>/dev/null; then
             tmux new-session -d -s "$sess" -c "$cwd" 2>/dev/null
             tmux rename-window -t "${sess}:1" "$wname" 2>/dev/null
-            target="${sess}:1"
         elif ! tmux list-windows -t "$sess" -F '#{window_index}' 2>/dev/null | grep -qx "$win"; then
             tmux new-window -d -t "$target" -n "$wname" -c "$cwd" 2>/dev/null
         else
             tmux split-window -d -t "$target" -c "$cwd" 2>/dev/null
         fi
-        # re-run (or pre-type) the command that was running in this pane
-        if [ -n "$fullcmd" ] && [ "$cmd" != "bash" ] && [ "$cmd" != "sh" ] && [ "$cmd" != "zsh" ]; then
-            sleep 0.3
-            if rerun_safe "$fullcmd"; then
-                tmux send-keys -t "$target" "$fullcmd" C-m 2>/dev/null
-            else
-                # type it but let the user press Enter (safety)
-                tmux send-keys -t "$target" "$fullcmd" 2>/dev/null
-            fi
-        fi
     done < "$STATE_DIR/tmux-panes.txt"
-    log "tmux sessions rebuilt (+ commands re-run per allowlist)"
+    log "tmux sessions rebuilt (legacy manifest)"
 fi
 
 # ── 2. Terminal windows (attach to tmux automatically) ──

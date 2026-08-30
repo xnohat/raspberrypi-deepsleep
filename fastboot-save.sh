@@ -17,22 +17,16 @@ as_user() { sudo -u "$USERNAME" "$@"; }
 NEW_DIR="${STATE_DIR}.new"
 rm -rf "$NEW_DIR"
 mkdir -p "$NEW_DIR"
+chown "$USERNAME:$USERNAME" "$NEW_DIR"   # tmux-state.py runs as $USERNAME
 SAVE_OK=1
 log "Saving session state..."
 
-# ── 1. tmux: dump every session/window/pane (layout, cwd, running command) ──
+# ── 1. tmux: JSON manifest via tmux-state.py (fg-process-group capture) ──
 if as_user tmux list-sessions >/dev/null 2>&1; then
-    # pane_pid = the pane's shell; its child = the actual running command.
-    # Capture the child's FULL cmdline (args included) so restore can re-run it.
-    as_user tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{pane_index}|#{pane_current_path}|#{pane_current_command}|#{pane_pid}' 2>/dev/null \
-    | while IFS='|' read -r sess win wname pane cwd cmd panepid; do
-        fullcmd=""
-        child=$(pgrep -P "$panepid" 2>/dev/null | head -1)
-        if [ -n "$child" ]; then
-            fullcmd=$(tr '\0' ' ' < "/proc/$child/cmdline" 2>/dev/null | sed 's/ $//')
-        fi
-        echo "${sess}|${win}|${wname}|${pane}|${cwd}|${cmd}|${fullcmd}"
-    done > "$NEW_DIR/tmux-panes.txt"
+    as_user python3 /usr/local/bin/tmux-state.py save "$NEW_DIR/tmux-state.json" >> "$LOG" 2>&1
+    # legacy manifest kept for scrollback loop below
+    as_user tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{pane_index}|#{pane_current_path}|#{pane_current_command}|-' \
+        > "$NEW_DIR/tmux-panes.txt" 2>/dev/null
     # scrollback of each pane (last 2000 lines) for context
     mkdir -p "$NEW_DIR/tmux-scrollback"
     while IFS='|' read -r sess win wname pane cwd cmd fullcmd; do
@@ -94,7 +88,7 @@ done
 
 # ── 4. Terminal windows open? (foot = PiTerm, lxterminal legacy) ──
 # foot: one process per window; count real windows (exclude footclient/server)
-FOOT_N=$(pgrep -u "$USERNAME" -cx foot 2>/dev/null || echo 0)
+FOOT_N=$(pgrep -u "$USERNAME" -cx foot 2>/dev/null); FOOT_N=${FOOT_N:-0}
 if [ "$FOOT_N" -gt 0 ]; then
     echo "foot|$FOOT_N" >> "$NEW_DIR/apps.txt"
 fi
