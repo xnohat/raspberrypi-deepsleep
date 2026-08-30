@@ -35,6 +35,9 @@ EXCLUDE_PATTERNS+="|^(irq/|i2c-|spi-|mmc-|usb-|input-|hid-)"
 EXCLUDE_PATTERNS+="|^(bash|sh|dash|zsh)$"
 # NOTE: ps comm truncates to 15 chars ("deepsleep-watch"), match prefixes
 EXCLUDE_PATTERNS+="|powerbtn-deepsl|deepsleep-|battery-log"
+# Never freeze 'sleep' children: the watchdog/logger loops block on `sleep N`;
+# freezing that child freezes the whole loop (watchdog dead = no fan safety!)
+EXCLUDE_PATTERNS+="|^sleep$"
 # Keep the AI agent gateway alive so the machine stays reachable in sleep
 if [ "$KEEP_AGENT" = "1" ]; then
     EXCLUDE_PATTERNS+="|openclaw|aicoworker|crawbot"
