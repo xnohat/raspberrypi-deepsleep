@@ -118,11 +118,24 @@ def save(path: str) -> None:
         if sess not in rep_set:
             continue        # grouped view duplicates: skip
         argv = []
+        last_cmd = ""
         if cur not in SHELLS:
             argv = fg_argv(tty, int(panepid), cur)
+        else:
+            # idle shell: remember the LAST command typed (from scrollback
+            # prompt lines like "pi@host:~ $ ls -la") so restore can prefill
+            # it for the user to confirm with Enter.
+            import re
+            scroll = tmux("capture-pane", "-t", f"{sess}:{win}.{pane}",
+                          "-p", "-S", "-200", out=True)
+            for line in scroll.splitlines():
+                m = re.search(r"[$#] (.+)$", line)
+                if m and m.group(1).strip():
+                    last_cmd = m.group(1).strip()
         panes.append({
             "session": sess, "window": int(win), "window_name": wname,
             "pane": int(pane), "cwd": cwd, "command": cur, "argv": argv,
+            "last_cmd": last_cmd,
         })
     # per-view selected window: each PiTerm window returns to what it showed
     view_windows = {}
@@ -170,6 +183,9 @@ def restore(path: str) -> None:
                 tmux("send-keys", "-t", target, cmdline, "C-m")
             else:
                 tmux("send-keys", "-t", target, cmdline)  # prefill only
+        elif p.get("last_cmd"):
+            # idle shell: prefill its last command — user decides (Enter)
+            tmux("send-keys", "-t", target, p["last_cmd"])
     # recreate grouped view sessions (each extra PiTerm window attaches one)
     view_windows = data.get("view_windows", {})
     for rep, count in data.get("views", {}).items():
