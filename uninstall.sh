@@ -1,61 +1,52 @@
 #!/bin/bash
-# uninstall.sh - Remove Pi Deep Sleep power button handler
+# uninstall.sh — remove Pi Deep Sleep + Fastboot + PiTerm (restores stock behavior)
 # Run with: sudo ./uninstall.sh
 
-set -e
+TARGET_USER="${SUDO_USER:-pi}"
+TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
 
-echo "=== Pi Deep Sleep Uninstaller ==="
-
-# Check root
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: Please run as root (sudo ./uninstall.sh)"
+    echo "Error: run as root (sudo ./uninstall.sh)"
     exit 1
 fi
 
-# Remove handler script
-echo "Removing handler script..."
-rm -f /usr/local/bin/powerbtn-deepsleep.sh
+echo "=== Uninstalling Pi Deep Sleep + Fastboot + PiTerm ==="
 
-# Remove ACPI event config
-echo "Removing ACPI event configuration..."
-rm -f /etc/acpi/events/powerbtn-custom
+# power button daemon
+systemctl disable --now powerbtn-daemon.service 2>/dev/null
+rm -f /etc/systemd/system/powerbtn-daemon.service
+systemctl daemon-reload
 
-# Restore original power button handler if backup exists
-if [ -f /etc/acpi/events/powerbtn.bak ]; then
-    echo "Restoring original power button handler..."
-    mv /etc/acpi/events/powerbtn.bak /etc/acpi/events/powerbtn
-fi
+# scripts
+rm -f /usr/local/bin/powerbtn-deepsleep.sh /usr/local/bin/fastboot-save.sh \
+      /usr/local/bin/fastboot-restore.sh /usr/local/bin/tmux-state.py \
+      /usr/local/bin/powerbtn-daemon.py /usr/local/bin/fastboot \
+      /usr/local/bin/battery-logger.sh
 
-# Clear state file
-rm -f /tmp/pi-deepsleep-state
+# sudoers
+rm -f /etc/sudoers.d/pi-deepsleep /etc/sudoers.d/pi-fastboot
 
-# Restore original /usr/bin/pwrkey if we backed it up
-PWRKEY_BIN="/usr/bin/pwrkey"
-if [ -f "${PWRKEY_BIN}.bak" ]; then
-    echo "Restoring original desktop pwrkey handler..."
-    mv "${PWRKEY_BIN}.bak" "$PWRKEY_BIN"
-fi
+# restore legacy handlers
+for f in /etc/acpi/events/powerbtn-custom /etc/acpi/events/powerbtn-acpi-support /etc/acpi/events/powerbtn; do
+    [ -f "$f.disabled" ] && mv "$f.disabled" "$f"
+done
+systemctl restart acpid 2>/dev/null
+[ -f /usr/bin/pwrkey.bak ] && mv /usr/bin/pwrkey.bak /usr/bin/pwrkey
+[ -f /etc/xdg/autostart/pwrkey.desktop.disabled ] && mv /etc/xdg/autostart/pwrkey.desktop.disabled /etc/xdg/autostart/pwrkey.desktop
+sed -i 's/^HandlePowerKey=ignore/#HandlePowerKey=poweroff/' /etc/systemd/logind.conf
+systemctl kill -s HUP systemd-logind 2>/dev/null
 
-# Restore desktop power key inhibitor if we disabled it
-PWRKEY_DESKTOP="/etc/xdg/autostart/pwrkey.desktop"
-if [ -f "${PWRKEY_DESKTOP}.disabled" ]; then
-    echo "Restoring desktop power key inhibitor..."
-    mv "${PWRKEY_DESKTOP}.disabled" "$PWRKEY_DESKTOP"
-fi
+# piterm (leave foot/tmux packages installed; remove configs)
+rm -f "$TARGET_HOME/.local/share/applications/piterm.desktop" \
+      "$TARGET_HOME/.local/bin/piterm-attach" \
+      "$TARGET_HOME/.tmux-status.sh"
+# .tmux.conf and foot.ini left in place (may contain user edits) — remove manually if desired
 
-# Restore systemd-logind power button handling
-LOGIND_CONF="/etc/systemd/logind.conf"
-echo "Restoring systemd-logind power button handling..."
-if grep -q "^HandlePowerKey=ignore" "$LOGIND_CONF"; then
-    # Restore to default poweroff behavior
-    sed -i 's/^HandlePowerKey=ignore/HandlePowerKey=poweroff/' "$LOGIND_CONF"
-fi
-# Restart systemd-logind to apply changes
-systemctl restart systemd-logind
+# labwc hooks
+sed -i '/fastboot-restore/d' "$TARGET_HOME/.config/labwc/autostart" 2>/dev/null
 
-# Restart acpid
-systemctl restart acpid
+# state
+rm -rf "$TARGET_HOME/.fastboot-state" "$TARGET_HOME/.fastboot-state.previous" "$TARGET_HOME/.fastboot-state.new"
 
-echo ""
-echo "=== Uninstallation Complete ==="
-echo "Power button restored to default behavior."
+echo "=== Done. Reboot recommended. ==="
+echo "(foot/tmux packages and ~/.tmux.conf, foot.ini kept — remove manually if unwanted)"
