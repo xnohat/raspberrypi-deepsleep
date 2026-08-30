@@ -24,7 +24,12 @@ for s in $(tmux list-sessions -F '#{session_name} #{session_attached} #{session_
     exec tmux attach-session -t "$s"
 done
 
-# all attached -> create a new grouped session
+# all attached -> create a new grouped session showing a FRESH shell window
+# (otherwise the new view displays the group's current window and looks
+# like a mirror of the existing PiTerm window)
 i=2
 while tmux has-session -t "${BASE}${i}" 2>/dev/null; do i=$((i+1)); done
-exec tmux new-session -t "$BASE" -s "${BASE}${i}"
+NEW="${BASE}${i}"
+tmux new-session -d -t "$BASE" -s "$NEW"
+tmux new-window -t "$NEW" -c "$HOME"
+exec tmux attach-session -t "$NEW"
