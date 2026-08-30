@@ -58,10 +58,24 @@ if [ -n "$FOOT_LINE" ]; then
     VJSON=$(python3 -c "import json,sys; d=json.load(open('$STATE_DIR/tmux-state.json')); print(sum(d.get('views',{}).values()) or 0)" 2>/dev/null)
     [ -n "$VJSON" ] && [ "$VJSON" -ge 1 ] 2>/dev/null && N=$VJSON
     [ "$N" -ge 1 ] 2>/dev/null || N=1
-    for i in $(seq 1 "$N"); do
-        foot --app-id=piterm --title=PiTerm /home/pi/.local/bin/piterm-attach >/dev/null 2>&1 &
-        sleep 0.5
-    done
+    # attach each foot window to its OWN restored view session in order
+    VIEWS=$(python3 -c "
+import json
+d = json.load(open('$STATE_DIR/tmux-state.json'))
+for rep, n in d.get('views', {}).items():
+    print(rep)
+    for i in range(2, n + 1): print(f'{rep}{i}')" 2>/dev/null)
+    if [ -n "$VIEWS" ]; then
+        for v in $VIEWS; do
+            foot --app-id=piterm --title=PiTerm tmux attach-session -t "$v" >/dev/null 2>&1 &
+            sleep 0.5
+        done
+    else
+        for i in $(seq 1 "$N"); do
+            foot --app-id=piterm --title=PiTerm /home/pi/.local/bin/piterm-attach >/dev/null 2>&1 &
+            sleep 0.5
+        done
+    fi
     log "PiTerm (foot) reopened x$N"
 fi
 if grep -qx "lxterminal" "$STATE_DIR/apps.txt" 2>/dev/null; then

@@ -124,10 +124,20 @@ def save(path: str) -> None:
             "session": sess, "window": int(win), "window_name": wname,
             "pane": int(pane), "cwd": cwd, "command": cur, "argv": argv,
         })
+    # per-view selected window: each PiTerm window returns to what it showed
+    view_windows = {}
+    for line in tmux("list-sessions", "-F",
+                     "#{session_name}\t#{session_group}", out=True).splitlines():
+        name = line.split("\t")[0]
+        sel = tmux("display-message", "-t", name, "-p",
+                   "#{window_index}", out=True).strip()
+        if sel.isdigit():
+            view_windows[name] = int(sel)
     manifest = {
         "version": 3,
         "panes": panes,
         "views": {reps[g]: n for g, n in views.items()},
+        "view_windows": view_windows,
     }
     with open(path, "w") as fh:
         json.dump(manifest, fh, indent=1)
@@ -161,11 +171,15 @@ def restore(path: str) -> None:
             else:
                 tmux("send-keys", "-t", target, cmdline)  # prefill only
     # recreate grouped view sessions (each extra PiTerm window attaches one)
+    view_windows = data.get("view_windows", {})
     for rep, count in data.get("views", {}).items():
         for i in range(2, count + 1):
             name = f"{rep}{i}"
             if tmux("has-session", "-t", name) != 0:
                 tmux("new-session", "-d", "-t", rep, "-s", name)
+    # point every view (incl. the representative) at its saved window
+    for name, sel in view_windows.items():
+        tmux("select-window", "-t", f"{name}:{sel}")
     # verify: pane count of representative sessions must cover manifest
     reps, _ = group_representatives()
     rep_set = set(reps.values())
