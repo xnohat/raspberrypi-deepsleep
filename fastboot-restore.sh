@@ -24,29 +24,41 @@ for i in $(seq 1 30); do
 done
 sleep 2
 
-# ── 1. tmux sessions: rebuild windows/panes with saved cwd, show scrollback ──
+# ── 1. tmux sessions: rebuild windows/panes with saved cwd + RE-RUN commands ──
+# Safe-to-rerun allowlist: monitors/viewers/connections. Anything else
+# (editors with unsaved state, rm, dd, builds...) is typed but NOT executed —
+# user just presses Enter to confirm.
+rerun_safe() {
+    case "$1" in
+        btop*|htop*|top*|watch\ *|tail\ *|journalctl*|dmesg*|ssh\ *|mosh\ *|ping\ *|tmux\ *) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 if [ -f "$STATE_DIR/tmux-panes.txt" ]; then
-    prev_sess=""
-    while IFS='|' read -r sess win wname pane cwd cmd layout; do
+    while IFS='|' read -r sess win wname pane cwd cmd fullcmd; do
         [ -d "$cwd" ] || cwd="$HOME"
         target="${sess}:${win}"
         if ! tmux has-session -t "$sess" 2>/dev/null; then
             tmux new-session -d -s "$sess" -c "$cwd" 2>/dev/null
             tmux rename-window -t "${sess}:1" "$wname" 2>/dev/null
-            prev_sess="$sess"; prev_win="1"; first_in_win=1
-            continue
-        fi
-        if ! tmux list-windows -t "$sess" -F '#{window_index}' 2>/dev/null | grep -qx "$win"; then
+            target="${sess}:1"
+        elif ! tmux list-windows -t "$sess" -F '#{window_index}' 2>/dev/null | grep -qx "$win"; then
             tmux new-window -d -t "$target" -n "$wname" -c "$cwd" 2>/dev/null
         else
             tmux split-window -d -t "$target" -c "$cwd" 2>/dev/null
         fi
+        # re-run (or pre-type) the command that was running in this pane
+        if [ -n "$fullcmd" ] && [ "$cmd" != "bash" ] && [ "$cmd" != "sh" ] && [ "$cmd" != "zsh" ]; then
+            sleep 0.3
+            if rerun_safe "$fullcmd"; then
+                tmux send-keys -t "$target" "$fullcmd" C-m 2>/dev/null
+            else
+                # type it but let the user press Enter (safety)
+                tmux send-keys -t "$target" "$fullcmd" 2>/dev/null
+            fi
+        fi
     done < "$STATE_DIR/tmux-panes.txt"
-    # drop a note about old scrollback location into each restored session
-    for s in $(tmux list-sessions -F '#{session_name}' 2>/dev/null); do
-        tmux send-keys -t "$s" "echo '📋 fastboot: scrollback cũ lưu ở $STATE_DIR/tmux-scrollback/'" C-m 2>/dev/null
-    done
-    log "tmux sessions rebuilt"
+    log "tmux sessions rebuilt (+ commands re-run per allowlist)"
 fi
 
 # ── 2. Terminal windows (attach to tmux automatically) ──

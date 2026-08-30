@@ -22,11 +22,20 @@ log "Saving session state..."
 
 # ── 1. tmux: dump every session/window/pane (layout, cwd, running command) ──
 if as_user tmux list-sessions >/dev/null 2>&1; then
-    as_user tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{pane_index}|#{pane_current_path}|#{pane_current_command}|#{window_layout}' \
-        > "$NEW_DIR/tmux-panes.txt" 2>/dev/null
+    # pane_pid = the pane's shell; its child = the actual running command.
+    # Capture the child's FULL cmdline (args included) so restore can re-run it.
+    as_user tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{pane_index}|#{pane_current_path}|#{pane_current_command}|#{pane_pid}' 2>/dev/null \
+    | while IFS='|' read -r sess win wname pane cwd cmd panepid; do
+        fullcmd=""
+        child=$(pgrep -P "$panepid" 2>/dev/null | head -1)
+        if [ -n "$child" ]; then
+            fullcmd=$(tr '\0' ' ' < "/proc/$child/cmdline" 2>/dev/null | sed 's/ $//')
+        fi
+        echo "${sess}|${win}|${wname}|${pane}|${cwd}|${cmd}|${fullcmd}"
+    done > "$NEW_DIR/tmux-panes.txt"
     # scrollback of each pane (last 2000 lines) for context
     mkdir -p "$NEW_DIR/tmux-scrollback"
-    while IFS='|' read -r sess win wname pane cwd cmd layout; do
+    while IFS='|' read -r sess win wname pane cwd cmd fullcmd; do
         as_user tmux capture-pane -t "${sess}:${win}.${pane}" -p -S -2000 \
             > "$NEW_DIR/tmux-scrollback/${sess}_${win}_${pane}.txt" 2>/dev/null
     done < "$NEW_DIR/tmux-panes.txt"
