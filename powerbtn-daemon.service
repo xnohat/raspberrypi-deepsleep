@@ -1,0 +1,11 @@
+[Unit]
+Description=Power button press-duration dispatcher (short=deep sleep, long=fastboot)
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/powerbtn-daemon.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

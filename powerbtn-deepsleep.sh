@@ -36,7 +36,7 @@ EXCLUDE_PATTERNS+="|^(acpid|dbus|polkit|login|getty|agetty|sshd|ssh-agent)"
 EXCLUDE_PATTERNS+="|^(irq/|i2c-|spi-|mmc-|usb-|input-|hid-)"
 EXCLUDE_PATTERNS+="|^(bash|sh|dash|zsh)$"
 # NOTE: ps comm truncates to 15 chars ("deepsleep-watch"), match prefixes
-EXCLUDE_PATTERNS+="|powerbtn-deepsl|deepsleep-|battery-log"
+EXCLUDE_PATTERNS+="|powerbtn-deepsl|powerbtn-daemon|deepsleep-|battery-log"
 # Never freeze 'sleep' children: the watchdog/logger loops block on `sleep N`;
 # freezing that child freezes the whole loop (watchdog dead = no fan safety!)
 EXCLUDE_PATTERNS+="|^sleep$"
