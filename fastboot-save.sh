@@ -42,19 +42,28 @@ if pgrep -u "$USERNAME" -f "chromium" >/dev/null 2>&1; then
     done
     log "chromium closed gracefully"
 fi
-# force restore_on_startup=1 (restore last session) + clean exit flags
+# force restore_on_startup=1 (restore last session) + clean exit flags.
+# Only edit AFTER chromium fully exited; atomic write via temp file + backup.
 PREF="/home/pi/.config/chromium/Default/Preferences"
 if [ -f "$PREF" ]; then
-    as_user python3 - "$PREF" << 'PYEOF'
-import json, sys
+    if pgrep -u "$USERNAME" -f "chromium" >/dev/null 2>&1; then
+        log "WARNING: chromium still running - skipping Preferences edit (native session files will still restore)"
+    else
+        as_user python3 - "$PREF" << 'PYEOF'
+import json, sys, os, shutil
 p = sys.argv[1]
+shutil.copy2(p, p + '.fastboot-bak')
 with open(p) as f: d = json.load(f)
 d.setdefault('session', {})['restore_on_startup'] = 1
 d.setdefault('profile', {})['exit_type'] = 'Normal'
 d['profile']['exited_cleanly'] = True
-with open(p, 'w') as f: json.dump(d, f)
+tmp = p + '.tmp'
+with open(tmp, 'w') as f: json.dump(d, f)
+os.replace(tmp, p)
 PYEOF
-    log "chromium restore_on_startup=1 set"
+        chown "$USERNAME:$USERNAME" "$PREF" "$PREF.fastboot-bak" 2>/dev/null
+        log "chromium restore_on_startup=1 set (atomic, backup kept)"
+    fi
 fi
 
 # ── 3. File managers: save cwd of each open window process ──

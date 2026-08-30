@@ -10,7 +10,9 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - FASTBOOT-RESTORE: $1" >> "$LOG" 2>/
 
 # only run when armed
 [ -f "$STATE_DIR/restore-pending" ] || exit 0
-rm -f "$STATE_DIR/restore-pending"   # one-shot: remove marker first
+# rename marker (not delete): if restore crashes mid-way the .attempted file
+# remains as evidence; only remove after successful completion below.
+mv "$STATE_DIR/restore-pending" "$STATE_DIR/restore-attempted"
 log "Restoring session..."
 
 # wait for wayland compositor to be ready
@@ -70,4 +72,5 @@ if [ -f "$STATE_DIR/filemgr.txt" ]; then
     log "file manager windows reopened"
 fi
 
+rm -f "$STATE_DIR/restore-attempted"
 log "Restore complete"
