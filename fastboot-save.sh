@@ -12,28 +12,32 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - FASTBOOT: $1" >> "$LOG"; }
 
 as_user() { sudo -u "$USERNAME" "$@"; }
 
-mkdir -p "$STATE_DIR"
-rm -rf "$STATE_DIR"/*
+# Transactional save: build in .new, atomically swap in only when complete.
+# Previous good state is kept at .previous (never lose the last snapshot).
+NEW_DIR="${STATE_DIR}.new"
+rm -rf "$NEW_DIR"
+mkdir -p "$NEW_DIR"
+SAVE_OK=1
 log "Saving session state..."
 
 # ── 1. tmux: dump every session/window/pane (layout, cwd, running command) ──
 if as_user tmux list-sessions >/dev/null 2>&1; then
     as_user tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{pane_index}|#{pane_current_path}|#{pane_current_command}|#{window_layout}' \
-        > "$STATE_DIR/tmux-panes.txt" 2>/dev/null
+        > "$NEW_DIR/tmux-panes.txt" 2>/dev/null
     # scrollback of each pane (last 2000 lines) for context
-    mkdir -p "$STATE_DIR/tmux-scrollback"
+    mkdir -p "$NEW_DIR/tmux-scrollback"
     while IFS='|' read -r sess win wname pane cwd cmd layout; do
         as_user tmux capture-pane -t "${sess}:${win}.${pane}" -p -S -2000 \
-            > "$STATE_DIR/tmux-scrollback/${sess}_${win}_${pane}.txt" 2>/dev/null
-    done < "$STATE_DIR/tmux-panes.txt"
-    log "tmux: $(wc -l < "$STATE_DIR/tmux-panes.txt") panes saved"
+            > "$NEW_DIR/tmux-scrollback/${sess}_${win}_${pane}.txt" 2>/dev/null
+    done < "$NEW_DIR/tmux-panes.txt"
+    log "tmux: $(wc -l < "$NEW_DIR/tmux-panes.txt") panes saved"
 fi
 
 # ── 2. Chromium: enable native session restore, then close cleanly ──
 CHROME_RUNNING=0
 if pgrep -u "$USERNAME" -f "chromium" >/dev/null 2>&1; then
     CHROME_RUNNING=1
-    echo "chromium" >> "$STATE_DIR/apps.txt"
+    echo "chromium" >> "$NEW_DIR/apps.txt"
     # ask chromium to exit gracefully (SIGTERM lets it mark clean exit)
     pkill -u "$USERNAME" -TERM -f "chromium" 2>/dev/null
     for i in $(seq 1 20); do
@@ -74,25 +78,33 @@ for fm in pcmanfm thunar; do
     for pid in $(pgrep -u "$USERNAME" -x "$fm" 2>/dev/null); do
         if grep -q -- "--desktop" "/proc/$pid/cmdline" 2>/dev/null; then continue; fi
         cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
-        [ -n "$cwd" ] && echo "$fm|$cwd" >> "$STATE_DIR/filemgr.txt"
+        [ -n "$cwd" ] && echo "$fm|$cwd" >> "$NEW_DIR/filemgr.txt"
     done
 done
-[ -f "$STATE_DIR/filemgr.txt" ] && log "file managers: $(wc -l < "$STATE_DIR/filemgr.txt") windows saved"
+[ -f "$NEW_DIR/filemgr.txt" ] && log "file managers: $(wc -l < "$NEW_DIR/filemgr.txt") windows saved"
 
 # ── 4. Terminal windows open? (foot = PiTerm, lxterminal legacy) ──
 # foot: one process per window; count real windows (exclude footclient/server)
 FOOT_N=$(pgrep -u "$USERNAME" -cx foot 2>/dev/null || echo 0)
 if [ "$FOOT_N" -gt 0 ]; then
-    echo "foot|$FOOT_N" >> "$STATE_DIR/apps.txt"
+    echo "foot|$FOOT_N" >> "$NEW_DIR/apps.txt"
 fi
 if pgrep -u "$USERNAME" -x lxterminal >/dev/null 2>&1; then
-    echo "lxterminal" >> "$STATE_DIR/apps.txt"
+    echo "lxterminal" >> "$NEW_DIR/apps.txt"
 fi
 
-# ── 5. Arm the restore-on-boot marker ──
-touch "$STATE_DIR/restore-pending"
-chown -R "$USERNAME:$USERNAME" "$STATE_DIR"
+# ── 5. Validate + atomic swap + arm marker; only shutdown when save is good ──
+[ -f "$NEW_DIR/tmux-panes.txt" ] || [ -f "$NEW_DIR/apps.txt" ] || {
+    log "ABORT: nothing captured (no tmux manifest, no apps) — NOT shutting down"
+    exit 1
+}
+touch "$NEW_DIR/restore-pending"
+chown -R "$USERNAME:$USERNAME" "$NEW_DIR"
+# keep previous good snapshot, swap new one in atomically
+rm -rf "${STATE_DIR}.previous"
+[ -d "$STATE_DIR" ] && mv "$STATE_DIR" "${STATE_DIR}.previous"
+mv "$NEW_DIR" "$STATE_DIR"
 sync
-log "State saved. Shutting down..."
+log "State saved (previous kept). Shutting down..."
 
 shutdown -h now

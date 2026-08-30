@@ -89,5 +89,19 @@ elif [ "${FILEMGR_ALWAYS:-1}" = "1" ]; then
     log "file manager reopened at HOME (fallback — windows not detectable)"
 fi
 
-rm -f "$STATE_DIR/restore-attempted"
-log "Restore complete"
+# ── Verify apps actually came up before clearing the marker ──
+sleep 3
+PASS=1
+if grep -q "^foot|" "$STATE_DIR/apps.txt" 2>/dev/null; then
+    pgrep -x foot >/dev/null || { PASS=0; log "VERIFY FAIL: foot not running"; }
+fi
+if grep -qx "chromium" "$STATE_DIR/apps.txt" 2>/dev/null; then
+    pgrep -f "chromium" >/dev/null || { PASS=0; log "VERIFY FAIL: chromium not running"; }
+fi
+if [ "$PASS" = "1" ]; then
+    rm -f "$STATE_DIR/restore-attempted"
+    log "Restore complete — PASS"
+else
+    # keep restore-attempted so next boot retries
+    log "Restore PARTIAL — marker kept for retry on next boot"
+fi
