@@ -17,7 +17,9 @@ KEEP_AGENT=1          # 1 = don't freeze AICoworker gateway (chat keeps working 
 FAN_OFF=1             # 1 = stop fan in sleep (thermal watchdog below still protects)
 WATCHDOG_TEMP=70000   # millidegC: watchdog re-enables fan above this
 WATCHDOG_INTERVAL=30  # seconds between watchdog temp checks
-HEAVY_SERVICES="ollama.service waydroid-container.service"  # stopped in sleep, restarted on wake
+# Stopped in sleep; only services that were ACTIVE before sleep are restarted
+# on wake (state saved to SAVED_STATE_FILE).
+HEAVY_SERVICES="ollama.service waydroid-container.service docker.service docker.socket containerd.service tailscaled.service lxc-monitord.service lxcfs.service snapd.service snapd.socket cups.service cups.socket cups-browsed.service ModemManager.service accounts-daemon.service power-profiles-daemon.service switcheroo-control.service"
 DISPLAY_USER=pi
 DISPLAY_OUTPUT="DPI-1"
 TOUCH_I2C_DEV="13-0048"
@@ -227,13 +229,25 @@ enter_deep_sleep() {
         log "Bluetooth blocked (wifi kept for remote access)"
     fi
 
-    # Stop heavy + non-essential services
-    for svc in $HEAVY_SERVICES; do
+    # Stop heavy + non-essential services (record which were active so wake
+    # only restarts those — never starts something the user had disabled)
+    active_svcs=""
+    for svc in $HEAVY_SERVICES avahi-daemon.service triggerhappy.service; do
+        if systemctl is-active "$svc" >/dev/null 2>&1; then
+            active_svcs="$active_svcs $svc"
+        fi
+    done
+    echo "services=$active_svcs" >> "$SAVED_STATE_FILE"
+    for svc in $active_svcs; do
         systemctl stop "$svc" 2>/dev/null || true
     done
-    systemctl stop avahi-daemon.service 2>/dev/null || true
-    systemctl stop triggerhappy.service 2>/dev/null || true
-    log "Services stopped ($HEAVY_SERVICES avahi triggerhappy)"
+    log "Services stopped:$active_svcs"
+
+    # Kill x86-emulated processes (qemu binfmt: open-webui supervisord stack).
+    # Emulation burns power even idle; supervisord under docker/systemd will
+    # be restarted by its parent service on wake.
+    pkill -f "qemu-binfmt" 2>/dev/null || true
+    log "qemu-emulated processes killed"
 
     # Disable HDMI output (harmless if none connected)
     {
@@ -347,12 +361,12 @@ exit_deep_sleep() {
     echo mmc0 > /sys/class/leds/ACT/trigger 2>/dev/null || true
     echo default-on > /sys/class/leds/PWR/trigger 2>/dev/null || true
 
-    # Restart services
-    for svc in $HEAVY_SERVICES; do
+    # Restart only the services that were active before sleep
+    restore_svcs=$(grep "^services=" "$SAVED_STATE_FILE" 2>/dev/null | cut -d= -f2-)
+    for svc in $restore_svcs; do
         systemctl start "$svc" 2>/dev/null || true
     done
-    systemctl start avahi-daemon.service 2>/dev/null || true
-    systemctl start triggerhappy.service 2>/dev/null || true
+    log "Services restarted:${restore_svcs:- (none)}"
 
     rm -f "$SAVED_STATE_FILE"
     log "Normal operation restored"
