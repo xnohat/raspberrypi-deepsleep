@@ -84,7 +84,29 @@ def fg_argv(tty: str, pane_pid: int, want: str):
     return best
 
 
+def group_representatives():
+    """One canonical session per group (or per standalone session).
+
+    Returns (repr_sessions, view_counts) where view_counts maps the
+    representative name -> number of grouped view sessions.
+    """
+    reps, views = {}, {}
+    out = tmux("list-sessions", "-F",
+               "#{session_name}\t#{session_group}", out=True)
+    for line in out.splitlines():
+        parts = line.split("\t")
+        name = parts[0]
+        group = parts[1] if len(parts) > 1 and parts[1] else name
+        views[group] = views.get(group, 0) + 1
+        # prefer the session named exactly like the group (e.g. "main")
+        if group not in reps or name == group:
+            reps[group] = name
+    return reps, views
+
+
 def save(path: str) -> None:
+    reps, views = group_representatives()
+    rep_set = set(reps.values())
     fmt = ("#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t"
            "#{pane_current_path}\t#{pane_current_command}\t#{pane_tty}\t#{pane_pid}")
     panes = []
@@ -93,6 +115,8 @@ def save(path: str) -> None:
         if len(f) != 8:
             continue
         sess, win, wname, pane, cwd, cur, tty, panepid = f
+        if sess not in rep_set:
+            continue        # grouped view duplicates: skip
         argv = []
         if cur not in SHELLS:
             argv = fg_argv(tty, int(panepid), cur)
@@ -100,9 +124,14 @@ def save(path: str) -> None:
             "session": sess, "window": int(win), "window_name": wname,
             "pane": int(pane), "cwd": cwd, "command": cur, "argv": argv,
         })
+    manifest = {
+        "version": 3,
+        "panes": panes,
+        "views": {reps[g]: n for g, n in views.items()},
+    }
     with open(path, "w") as fh:
-        json.dump({"version": 2, "panes": panes}, fh, indent=1)
-    print(f"saved {len(panes)} panes")
+        json.dump(manifest, fh, indent=1)
+    print(f"saved {len(panes)} panes, views={manifest['views']}")
 
 
 def restore(path: str) -> None:
@@ -131,8 +160,20 @@ def restore(path: str) -> None:
                 tmux("send-keys", "-t", target, cmdline, "C-m")
             else:
                 tmux("send-keys", "-t", target, cmdline)  # prefill only
-    # verify: pane count must match
-    have = len(tmux("list-panes", "-a", "-F", "x", out=True).splitlines())
+    # recreate grouped view sessions (each extra PiTerm window attaches one)
+    for rep, count in data.get("views", {}).items():
+        for i in range(2, count + 1):
+            name = f"{rep}{i}"
+            if tmux("has-session", "-t", name) != 0:
+                tmux("new-session", "-d", "-t", rep, "-s", name)
+    # verify: pane count of representative sessions must cover manifest
+    reps, _ = group_representatives()
+    rep_set = set(reps.values())
+    have = 0
+    for line in tmux("list-panes", "-a", "-F", "#{session_name}",
+                     out=True).splitlines():
+        if line in rep_set:
+            have += 1
     status = "PASS" if have >= made else f"PARTIAL ({have}/{made})"
     print(f"restored {made} panes — {status}")
     sys.exit(0 if have >= made else 2)

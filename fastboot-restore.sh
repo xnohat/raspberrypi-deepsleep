@@ -54,6 +54,9 @@ fi
 FOOT_LINE=$(grep "^foot|" "$STATE_DIR/apps.txt" 2>/dev/null)
 if [ -n "$FOOT_LINE" ]; then
     N=${FOOT_LINE#foot|}
+    # prefer view count from tmux manifest (grouped sessions = real windows)
+    VJSON=$(python3 -c "import json,sys; d=json.load(open('$STATE_DIR/tmux-state.json')); print(sum(d.get('views',{}).values()) or 0)" 2>/dev/null)
+    [ -n "$VJSON" ] && [ "$VJSON" -ge 1 ] 2>/dev/null && N=$VJSON
     [ "$N" -ge 1 ] 2>/dev/null || N=1
     for i in $(seq 1 "$N"); do
         foot --app-id=piterm --title=PiTerm /home/pi/.local/bin/piterm-attach >/dev/null 2>&1 &

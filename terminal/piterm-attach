@@ -11,6 +11,12 @@ if ! tmux has-session -t "$BASE" 2>/dev/null; then
     exec tmux new-session -A -s "$BASE"
 fi
 
+
+# cleanup: kill stale detached view sessions (mainN) older than 1h
+for st in $(tmux list-sessions -F '#{session_name} #{session_attached} #{session_group} #{session_activity}' 2>/dev/null \
+            | awk -v b="$BASE" -v now="$(date +%s)" '$1 != b && $3 == b && $2 == 0 && (now - $4) > 3600 {print $1}'); do
+    tmux kill-session -t "$st" 2>/dev/null
+done
 # reuse a detached session in the group if any
 for s in $(tmux list-sessions -F '#{session_name} #{session_attached} #{session_group}' 2>/dev/null \
            | awk -v b="$BASE" '$3 == b || $1 == b {print $1" "$2}' \
