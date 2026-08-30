@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Ani Terminal 🎀
+Comment=foot + tmux + status bar (fastboot-persistent)
+Exec=foot tmux new-session -A -s main
+Icon=utilities-terminal
+Type=Application
+Categories=System;TerminalEmulator;
