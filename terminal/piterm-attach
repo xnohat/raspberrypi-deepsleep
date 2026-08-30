@@ -1,0 +1,24 @@
+#!/bin/bash
+# piterm-attach — each PiTerm window gets its OWN grouped tmux session.
+# Grouped sessions share the same windows/panes (state saved by fastboot)
+# but each window can view a different tmux window independently.
+# Sessions named main, main2, main3... reuse detached ones first.
+
+BASE=main
+
+# no server yet -> create the base session
+if ! tmux has-session -t "$BASE" 2>/dev/null; then
+    exec tmux new-session -A -s "$BASE"
+fi
+
+# reuse a detached session in the group if any
+for s in $(tmux list-sessions -F '#{session_name} #{session_attached} #{session_group}' 2>/dev/null \
+           | awk -v b="$BASE" '$3 == b || $1 == b {print $1" "$2}' \
+           | awk '$2 == 0 {print $1}'); do
+    exec tmux attach-session -t "$s"
+done
+
+# all attached -> create a new grouped session
+i=2
+while tmux has-session -t "${BASE}${i}" 2>/dev/null; do i=$((i+1)); done
+exec tmux new-session -t "$BASE" -s "${BASE}${i}"

@@ -56,7 +56,7 @@ if [ -n "$FOOT_LINE" ]; then
     N=${FOOT_LINE#foot|}
     [ "$N" -ge 1 ] 2>/dev/null || N=1
     for i in $(seq 1 "$N"); do
-        foot --app-id=piterm --title=PiTerm tmux new-session -A -s main >/dev/null 2>&1 &
+        foot --app-id=piterm --title=PiTerm /home/pi/.local/bin/piterm-attach >/dev/null 2>&1 &
         sleep 0.5
     done
     log "PiTerm (foot) reopened x$N"
