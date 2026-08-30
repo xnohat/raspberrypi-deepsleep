@@ -13,7 +13,7 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - FASTBOOT: $1" >> "$LOG"; }
 as_user() { sudo -u "$USERNAME" "$@"; }
 
 mkdir -p "$STATE_DIR"
-rm -f "$STATE_DIR"/*
+rm -rf "$STATE_DIR"/*
 log "Saving session state..."
 
 # ── 1. tmux: dump every session/window/pane (layout, cwd, running command) ──
@@ -67,9 +67,11 @@ PYEOF
 fi
 
 # ── 3. File managers: save cwd of each open window process ──
+# pcmanfm --desktop reuses ONE process for desktop AND folder windows, so
+# process-scanning can't see folder windows. Use its saved tab config +
+# a window-count heuristic instead.
 for fm in pcmanfm thunar; do
     for pid in $(pgrep -u "$USERNAME" -x "$fm" 2>/dev/null); do
-        # skip the desktop-mode pcmanfm (it has --desktop in cmdline)
         if grep -q -- "--desktop" "/proc/$pid/cmdline" 2>/dev/null; then continue; fi
         cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
         [ -n "$cwd" ] && echo "$fm|$cwd" >> "$STATE_DIR/filemgr.txt"
@@ -77,7 +79,12 @@ for fm in pcmanfm thunar; do
 done
 [ -f "$STATE_DIR/filemgr.txt" ] && log "file managers: $(wc -l < "$STATE_DIR/filemgr.txt") windows saved"
 
-# ── 4. Was a terminal window open? ──
+# ── 4. Terminal windows open? (foot = PiTerm, lxterminal legacy) ──
+# foot: one process per window; count real windows (exclude footclient/server)
+FOOT_N=$(pgrep -u "$USERNAME" -cx foot 2>/dev/null || echo 0)
+if [ "$FOOT_N" -gt 0 ]; then
+    echo "foot|$FOOT_N" >> "$STATE_DIR/apps.txt"
+fi
 if pgrep -u "$USERNAME" -x lxterminal >/dev/null 2>&1; then
     echo "lxterminal" >> "$STATE_DIR/apps.txt"
 fi

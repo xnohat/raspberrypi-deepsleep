@@ -49,7 +49,17 @@ if [ -f "$STATE_DIR/tmux-panes.txt" ]; then
     log "tmux sessions rebuilt"
 fi
 
-# ── 2. Terminal window (attaches to tmux automatically via lxterminal.conf) ──
+# ── 2. Terminal windows (attach to tmux automatically) ──
+FOOT_LINE=$(grep "^foot|" "$STATE_DIR/apps.txt" 2>/dev/null)
+if [ -n "$FOOT_LINE" ]; then
+    N=${FOOT_LINE#foot|}
+    [ "$N" -ge 1 ] 2>/dev/null || N=1
+    for i in $(seq 1 "$N"); do
+        foot --app-id=piterm --title=PiTerm tmux new-session -A -s main >/dev/null 2>&1 &
+        sleep 0.5
+    done
+    log "PiTerm (foot) reopened x$N"
+fi
 if grep -qx "lxterminal" "$STATE_DIR/apps.txt" 2>/dev/null; then
     lxterminal &
     log "lxterminal reopened"
@@ -62,7 +72,7 @@ if grep -qx "chromium" "$STATE_DIR/apps.txt" 2>/dev/null; then
 fi
 
 # ── 4. File manager windows at saved folders ──
-if [ -f "$STATE_DIR/filemgr.txt" ]; then
+if [ -s "$STATE_DIR/filemgr.txt" ]; then
     while IFS='|' read -r fm cwd; do
         [ -d "$cwd" ] || cwd="$HOME"
         case "$fm" in
@@ -72,6 +82,11 @@ if [ -f "$STATE_DIR/filemgr.txt" ]; then
         sleep 0.5
     done < "$STATE_DIR/filemgr.txt"
     log "file manager windows reopened"
+elif [ "${FILEMGR_ALWAYS:-1}" = "1" ]; then
+    # pcmanfm folder windows live inside the --desktop process on wayland —
+    # undetectable at save time. Compromise: always reopen one window at $HOME.
+    pcmanfm "$HOME" >/dev/null 2>&1 &
+    log "file manager reopened at HOME (fallback — windows not detectable)"
 fi
 
 rm -f "$STATE_DIR/restore-attempted"
