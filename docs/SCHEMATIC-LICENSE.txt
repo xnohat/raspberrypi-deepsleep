@@ -1,0 +1,4 @@
+Schematic_HackberryPi_CM5_Q20.pdf
+Source: https://github.com/ZitaoTech/HackberryPiCM5 (Hardware/)
+Copyright (c) 2025 Zitao — MIT License
+Redistributed here for research reference with attribution per MIT terms.

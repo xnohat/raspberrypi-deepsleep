@@ -94,6 +94,10 @@ echo "[5/8] PiTerm..."
 install -d -o "$TARGET_USER" -g "$TARGET_USER" \
     "$TARGET_HOME/.config/foot" "$TARGET_HOME/.local/bin" \
     "$TARGET_HOME/.local/share/applications"
+# backup existing user configs once (never clobber user edits silently)
+for f in "$TARGET_HOME/.config/foot/foot.ini" "$TARGET_HOME/.tmux.conf"; do
+    [ -f "$f" ] && [ ! -f "$f.pre-piterm" ] && cp "$f" "$f.pre-piterm"
+done
 install -m 644 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/terminal/foot.ini"       "$TARGET_HOME/.config/foot/foot.ini"
 install -m 644 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/terminal/tmux.conf"      "$TARGET_HOME/.tmux.conf"
 install -m 755 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/terminal/tmux-status.sh" "$TARGET_HOME/.tmux-status.sh"
