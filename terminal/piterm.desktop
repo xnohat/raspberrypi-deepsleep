@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Ani Terminal 🎀
+Name=PiTerm 🎀
 Comment=foot + tmux + status bar (fastboot-persistent)
 Exec=foot tmux new-session -A -s main
 Icon=utilities-terminal
