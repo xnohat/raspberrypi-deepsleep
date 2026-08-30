@@ -8,11 +8,13 @@ LOG="$STATE_DIR/restore.log"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - FASTBOOT-RESTORE: $1" >> "$LOG" 2>/dev/null || true; }
 
-# only run when armed
-[ -f "$STATE_DIR/restore-pending" ] || exit 0
-# rename marker (not delete): if restore crashes mid-way the .attempted file
-# remains as evidence; only remove after successful completion below.
-mv "$STATE_DIR/restore-pending" "$STATE_DIR/restore-attempted"
+# only run when armed (accept both markers: -attempted means a previous
+# restore crashed mid-way — retry it rather than losing the session forever)
+if [ -f "$STATE_DIR/restore-pending" ]; then
+    mv "$STATE_DIR/restore-pending" "$STATE_DIR/restore-attempted"
+elif [ ! -f "$STATE_DIR/restore-attempted" ]; then
+    exit 0
+fi
 log "Restoring session..."
 
 # wait for wayland compositor to be ready

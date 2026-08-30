@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=PiTerm 🎀
-Comment=foot + tmux + status bar (fastboot-persistent)
-Exec=foot tmux new-session -A -s main
+Name=PiTerm
+Comment=Fast wayland terminal + tmux (fastboot-persistent)
+Exec=foot --app-id=piterm --title=PiTerm tmux new-session -A -s main
 Icon=utilities-terminal
 Type=Application
 Categories=System;TerminalEmulator;
