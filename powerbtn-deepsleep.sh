@@ -13,9 +13,10 @@ LOG_FILE="/var/log/pi-deepsleep.log"
 
 # ── Config ───────────────────────────────────────────────────────
 WIFI_OFF=1            # 1 = block wifi in sleep (kills remote chat/ssh; wake only via button)
-PANEL_OFF=1           # 1 = disable DPI scanout in sleep (~1W! backlight button alone does NOT
-                      #     stop SoC scanout/HVS). Wake restores. Recover if flicker: screen btn/SW3.
-                      # NOTE: causes app jitter after wake (Jitsi) — keep 0, use PANEL_30HZ instead.
+PANEL_OFF=1           # DEFAULT ON. 1 = disable DPI scanout in sleep (~0.6W saved; backlight
+                      #     button alone does NOT stop SoC scanout/HVS). Wake re-enables + re-asserts
+                      #     mode. Side effect: some apps (Jitsi) may jitter after wake — fix by
+                      #     toggling the screen backlight button, or SW3 reset. Set 0 to disable.
 PANEL_30HZ=0          # 1 = drop refresh 60->30Hz in sleep (halves pixel clock 36.8->19.75MHz,
                       #     gentler than full off — no mode teardown, less TCON risk)
 KEEP_AGENT=1          # 1 = don't freeze AICoworker gateway (chat keeps working in sleep, can wake remotely)
