@@ -112,6 +112,8 @@ class App(tk.Tk):
         self.lbl_bat.pack(pady=4)
         self.lbl_cpu = ttk.Label(f, style="Big.TLabel")
         self.lbl_cpu.pack(pady=4)
+        self.lbl_ucfg = ttk.Label(f)
+        self.lbl_ucfg.pack(pady=2)
         self.lbl_misc = ttk.Label(f)
         self.lbl_misc.pack(pady=4)
 
@@ -137,6 +139,13 @@ class App(tk.Tk):
                 messagebox.showerror("Pi Power", out or "lỗi", parent=self)
 
     def _tick(self):
+        try:
+            self._tick_body()
+        except Exception:
+            pass  # never let one bad sysfs read kill the periodic refresh
+        self.after(2000, self._tick)
+
+    def _tick_body(self):
         temp = int(read("/sys/class/thermal/thermal_zone0/temp", "0")) / 1000
         fh = fan_hwmon()
         rpm = read(f"{fh}/fan1_input", "?") if fh else "?"
@@ -162,6 +171,17 @@ class App(tk.Tk):
         cap_txt = f"⚠ cap {fmax} MHz" if capped else f"max {fmax} MHz"
         self.lbl_cpu.configure(
             text=f"⚡ CPU {freq} MHz  ({cap_txt} · {gov})", foreground=cpu_col)
+        # Persistent option state (from the sleep script) — survives wake, unlike
+        # the live cap which only shows while actually sleeping.
+        try:
+            cfg = read("/usr/local/bin/powerbtn-deepsleep.sh", "")
+            m = re.search(r"^CPU_UNDERCLOCK=([01])", cfg, re.M)
+            on = m and m.group(1) == "1"
+            self.lbl_ucfg.configure(
+                text=f"Underclock CPU khi sleep: {'BẬT' if on else 'tắt'}",
+                foreground=(WARN if on else GOOD))
+        except Exception:
+            self.lbl_ucfg.configure(text="")
         self.lbl_misc.configure(text=f"{time.strftime('%H:%M:%S')}")
         self.after(2000, self._tick)
 
