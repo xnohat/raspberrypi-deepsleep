@@ -29,7 +29,9 @@ HEAVY_SERVICES="ollama.service waydroid-container.service docker.service docker.
 DISPLAY_USER=pi
 DISPLAY_OUTPUT="DPI-1"
 # auto-detect: i2c-gpio bus number changes across boots (13-0048 vs 14-0048!)
-TOUCH_I2C_DEV=$(ls /sys/bus/i2c/drivers/edt_ft5x06/ 2>/dev/null | grep -m1 -E '^[0-9]+-0048$')
+# MUST scan /sys/bus/i2c/devices (all devices) NOT the driver dir (only lists
+# BOUND devices — empty while touch is unbound on wake => rebind no-op!)
+TOUCH_I2C_DEV=$(ls /sys/bus/i2c/devices/ 2>/dev/null | grep -m1 -E '^[0-9]+-0048$')
 [ -z "$TOUCH_I2C_DEV" ] && TOUCH_I2C_DEV="none-detected"
 TOUCH_DRIVER="/sys/bus/i2c/drivers/edt_ft5x06"
 SD_MMC_DEV="1000fff000.mmc"   # SD-card slot controller (mmc0). NOT the wifi SDIO (1001100000.mmc)!
