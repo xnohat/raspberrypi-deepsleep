@@ -149,7 +149,7 @@ panel_off() {
     local rtdir uid
     uid=$(id -u "$DISPLAY_USER" 2>/dev/null) || return 0
     rtdir="/run/user/$uid"
-    sudo -u "$DISPLAY_USER" WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="$rtdir" \
+    timeout 10 sudo -u "$DISPLAY_USER" WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="$rtdir" \
         wlr-randr --output "$DISPLAY_OUTPUT" --off 2>/dev/null || true
     log "Panel $DISPLAY_OUTPUT off"
 }
@@ -158,7 +158,7 @@ panel_on() {
     local rtdir uid
     uid=$(id -u "$DISPLAY_USER" 2>/dev/null) || return 0
     rtdir="/run/user/$uid"
-    sudo -u "$DISPLAY_USER" WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="$rtdir" \
+    timeout 10 sudo -u "$DISPLAY_USER" WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="$rtdir" \
         wlr-randr --output "$DISPLAY_OUTPUT" --on 2>/dev/null || true
     log "Panel $DISPLAY_OUTPUT on"
 }

@@ -191,9 +191,11 @@ A/B từng đòn bẩy:
 cho scanout (HVS + pixel clock + compositor render vào buffer không ai xem).
 `wlr-randr --output DPI-1 --off` cắt sạch phần này. VDD_CORE 1971→1547mW.
 
-**Sleep mới (PANEL_OFF=1): 2069mW rails-only ≈ 559mA@3.7V** (-22% vs 2650mW).
-Panel wake lại OK qua nhiều chu kỳ test. Rủi ro flicker TCON sau off rất lâu
-vẫn tồn tại (recover: nút màn / SW3) — đánh đổi chấp nhận được.
+**Sleep mới (PANEL_OFF=1): 2069mW rails-only ≈ 559mA@3.7V** (-22%, tức -581mW đo
+có kiểm soát; con số "~1W" awake là quan sát nhiễu). ⚠️ PROVISIONAL: mới verify
+wake OK qua 3 chu kỳ NGẮN (2-4 phút). Rủi ro flicker TCON sau off DÀI (§5) chưa
+test — cần test 15-30+ phút trước khi coi là production-safe. wlr-randr có
+timeout 10s, lỗi non-fatal, không block wake. Recover flicker: nút màn / SW3.
 
 **Chưa khai thác (cần reboot + anh quyết):**
 - `arm_freq_min=1500` là floor cao. Hạ xuống (nếu firmware cho) có thể cắt thêm
