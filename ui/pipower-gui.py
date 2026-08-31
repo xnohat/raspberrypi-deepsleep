@@ -165,37 +165,54 @@ class App(tk.Tk):
             ttk.Radiobutton(top, text=txt, value=val, variable=self.fan_mode,
                             command=self._fan_mode_changed).pack(side="left", padx=10)
 
-        # Auto: 4-point curve editor
+        # Auto: slider-based curve editor with live curve canvas
         self.fr_auto = ttk.Frame(f)
         self.fr_auto.pack(fill="both", expand=True, padx=14)
+        self.curve_canvas = tk.Canvas(self.fr_auto, bg="#16161e",
+                                      highlightthickness=0, height=170)
+        self.curve_canvas.pack(fill="x", pady=(8, 6))
         self.curve_vars = []
-        hdr = ttk.Frame(self.fr_auto)
-        hdr.pack(fill="x", pady=(8, 2))
-        for txt, w in (("Mức", 6), ("Nhiệt độ (°C)", 22), ("Tốc độ (pwm)", 22)):
-            ttk.Label(hdr, text=txt, width=w, font=("Sans", 10, "bold")).pack(side="left")
+        self.sel_point = tk.IntVar(value=0)
+        selrow = ttk.Frame(self.fr_auto)
+        selrow.pack(fill="x", pady=2)
+        ttk.Label(selrow, text="Chọn mức:", style="Big.TLabel").pack(side="left")
         for i in range(4):
-            row = ttk.Frame(self.fr_auto)
-            row.pack(fill="x", pady=3)
-            ttk.Label(row, text=f"  {i+1}", width=6).pack(side="left")
-            tv = tk.IntVar()
-            sv = tk.IntVar()
+            ttk.Radiobutton(selrow, text=f"  {i+1}  ", value=i,
+                            variable=self.sel_point,
+                            command=self._curve_sel_changed).pack(side="left", padx=4)
+        for i in range(4):
+            tv, sv = tk.IntVar(), tk.IntVar()
+            tv.trace_add("write", lambda *_: self._curve_redraw())
+            sv.trace_add("write", lambda *_: self._curve_redraw())
             self.curve_vars.append((tv, sv))
-            self._spin(row, tv, 30, 90, 1)
-            self._spin(row, sv, 0, 255, 5)
-        note = ttk.Label(self.fr_auto, foreground=WARN,
-                         text="⚠ Lưu curve cần REBOOT mới ăn vào driver.\n"
-                              "Dùng nút Test để nghe thử độ ồn từng mức trước.")
-        note.pack(pady=8)
+        # sliders operate on the SELECTED point
+        gr = ttk.Frame(self.fr_auto)
+        gr.pack(fill="x", pady=2)
+        ttk.Label(gr, text="🌡 Nhiệt:", width=9).grid(row=0, column=0, sticky="w")
+        self.sl_temp_val = ttk.Label(gr, width=6, font=("Sans", 13, "bold"),
+                                     foreground=WARN)
+        self.sl_temp_val.grid(row=0, column=2)
+        self.sl_temp = ttk.Scale(gr, from_=35, to=88, orient="horizontal", length=440,
+                                 command=lambda v: self._curve_slider("t", v))
+        self.sl_temp.grid(row=0, column=1, padx=4)
+        ttk.Label(gr, text="🌀 Tốc độ:", width=9).grid(row=1, column=0, sticky="w")
+        self.sl_speed_val = ttk.Label(gr, width=6, font=("Sans", 13, "bold"),
+                                      foreground=ACCENT)
+        self.sl_speed_val.grid(row=1, column=2)
+        self.sl_speed = ttk.Scale(gr, from_=0, to=255, orient="horizontal", length=440,
+                                  command=lambda v: self._curve_slider("s", v))
+        self.sl_speed.grid(row=1, column=1, padx=4)
         rowb = ttk.Frame(self.fr_auto)
-        rowb.pack(pady=4)
-        self.test_pwm = tk.IntVar(value=145)
-        ttk.Label(rowb, text="Test pwm:").pack(side="left")
-        self._spin(rowb, self.test_pwm, 0, 255, 5)
-        ttk.Button(rowb, text="▶ Test 5s", command=self._fan_test).pack(side="left", padx=8)
-        ttk.Button(self.fr_auto, text="💾 Lưu curve (cần reboot)",
-                   command=self._fan_save).pack(pady=8)
+        rowb.pack(pady=6)
+        ttk.Button(rowb, text="▶ Test mức này 5s",
+                   command=self._fan_test_selected).pack(side="left", padx=6)
+        ttk.Button(rowb, text="↩ Mặc định",
+                   command=self._fan_reset_default).pack(side="left", padx=6)
+        ttk.Button(rowb, text="💾 Lưu curve (cần reboot)",
+                   command=self._fan_save).pack(side="left", padx=6)
         self.lbl_fan_msg = ttk.Label(self.fr_auto, foreground=GOOD)
-        self.lbl_fan_msg.pack()
+        self.lbl_fan_msg.pack(pady=2)
+        self._updating_sliders = False
 
         # Manual: big slider
         self.fr_manual = ttk.Frame(f)
@@ -238,6 +255,105 @@ class App(tk.Tk):
             s = re.search(rf"^dtparam=fan_temp{i}_speed=(\d+)", txt, re.M)
             tv.set(int(t.group(1)) // 1000 if t else [55, 65, 72, 78][i])
             sv.set(int(s.group(1)) if s else [115, 145, 190, 255][i])
+        self._curve_sel_changed()
+
+    def _curve_sel_changed(self):
+        i = self.sel_point.get()
+        tv, sv = self.curve_vars[i]
+        self._updating_sliders = True
+        self.sl_temp.set(tv.get())
+        self.sl_speed.set(sv.get())
+        self._updating_sliders = False
+        self.sl_temp_val.configure(text=f"{tv.get()}°C")
+        self.sl_speed_val.configure(text=str(sv.get()))
+        self._curve_redraw()
+
+    def _curve_slider(self, which, val):
+        if self._updating_sliders:
+            return
+        i = self.sel_point.get()
+        tv, sv = self.curve_vars[i]
+        v = int(float(val))
+        if which == "t":
+            # clamp between neighbors to keep temps increasing
+            lo = self.curve_vars[i - 1][0].get() + 1 if i > 0 else 35
+            hi = self.curve_vars[i + 1][0].get() - 1 if i < 3 else 88
+            v = max(lo, min(hi, v))
+            tv.set(v)
+            self.sl_temp_val.configure(text=f"{v}°C")
+        else:
+            sv.set(v)
+            self.sl_speed_val.configure(text=str(v))
+
+    def _curve_redraw(self):
+        c = getattr(self, "curve_canvas", None)
+        if not c:
+            return
+        c.delete("all")
+        w = c.winfo_width() or 640
+        h = c.winfo_height() or 170
+        pad_l, pad_r, pad_t, pad_b = 40, 14, 12, 24
+        tmin, tmax = 35, 88
+
+        def X(t):
+            return pad_l + (w - pad_l - pad_r) * (t - tmin) / (tmax - tmin)
+
+        def Y(s):
+            return h - pad_b - (h - pad_t - pad_b) * s / 255
+
+        # grid
+        for s in (0, 128, 255):
+            c.create_line(pad_l, Y(s), w - pad_r, Y(s), fill=DIM, dash=(2, 4))
+            c.create_text(pad_l - 5, Y(s), text=str(s), anchor="e",
+                          fill=DIM, font=("Sans", 8))
+        for t in (40, 50, 60, 70, 80):
+            c.create_line(X(t), pad_t, X(t), h - pad_b, fill=DIM, dash=(2, 4))
+            c.create_text(X(t), h - pad_b + 10, text=f"{t}°",
+                          fill=DIM, font=("Sans", 8))
+        # current temp marker
+        now_t = int(read("/sys/class/thermal/thermal_zone0/temp", "0")) / 1000
+        if tmin < now_t < tmax:
+            c.create_line(X(now_t), pad_t, X(now_t), h - pad_b,
+                          fill=BAD, width=1)
+            c.create_text(X(now_t), pad_t - 2, text=f"{now_t:.0f}°",
+                          fill=BAD, anchor="s", font=("Sans", 8, "bold"))
+        # step curve: fan off until point 1, then steps
+        pts = [(tv.get(), sv.get()) for tv, sv in self.curve_vars]
+        path = [(tmin, 0), (pts[0][0], 0)]
+        for i, (t, s) in enumerate(pts):
+            path.append((t, s))
+            nxt = pts[i + 1][0] if i < 3 else tmax
+            path.append((nxt, s))
+        for a, b in zip(path, path[1:]):
+            c.create_line(X(a[0]), Y(a[1]), X(b[0]), Y(b[1]),
+                          fill=ACCENT, width=3)
+        # point handles (selected = bigger, warn color)
+        sel = self.sel_point.get()
+        for i, (t, s) in enumerate(pts):
+            r = 8 if i == sel else 5
+            col = WARN if i == sel else GOOD
+            c.create_oval(X(t) - r, Y(s) - r, X(t) + r, Y(s) + r,
+                          fill=col, outline="")
+            c.create_text(X(t), Y(s) - r - 8, text=str(i + 1),
+                          fill=col, font=("Sans", 9, "bold"))
+
+    def _fan_reset_default(self):
+        for (tv, sv), (t, spd) in zip(self.curve_vars,
+                                      [(55, 115), (65, 145), (72, 190), (78, 255)]):
+            tv.set(t)
+            sv.set(spd)
+        self._curve_sel_changed()
+        self.lbl_fan_msg.configure(text="Đã nạp curve mặc định (chưa lưu — bấm Lưu nếu ưng)",
+                                   foreground=WARN)
+
+    def _fan_test_selected(self):
+        i = self.sel_point.get()
+        pwm = self.curve_vars[i][1].get()
+        self.lbl_fan_msg.configure(text=f"Đang quay pwm {pwm} trong 5s...",
+                                   foreground=WARN)
+        self.update()
+        ok, out = apply_cmd("fan-test", pwm, 5)
+        self.lbl_fan_msg.configure(text=out, foreground=GOOD if ok else BAD)
 
     def _fan_mode_changed(self):
         if self.fan_mode.get() == "manual":
@@ -259,13 +375,6 @@ class App(tk.Tk):
         ok, out = apply_cmd("fan-manual", self.man_pwm.get())
         messagebox.showinfo("Pi Power", out, parent=self) if not ok else None
         self.lbl_man.configure(text=f"pwm {self.man_pwm.get()} ✓" if ok else "lỗi")
-
-    def _fan_test(self):
-        self.lbl_fan_msg.configure(text=f"Đang quay pwm {self.test_pwm.get()} trong 5s...",
-                                   foreground=WARN)
-        self.update()
-        ok, out = apply_cmd("fan-test", self.test_pwm.get(), 5)
-        self.lbl_fan_msg.configure(text=out, foreground=GOOD if ok else BAD)
 
     def _fan_save(self):
         pts = [(tv.get(), sv.get()) for tv, sv in self.curve_vars]
