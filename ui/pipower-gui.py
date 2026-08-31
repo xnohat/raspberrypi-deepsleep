@@ -110,6 +110,8 @@ class App(tk.Tk):
         self.lbl_fan.pack(pady=4)
         self.lbl_bat = ttk.Label(f, style="Big.TLabel")
         self.lbl_bat.pack(pady=4)
+        self.lbl_cpu = ttk.Label(f, style="Big.TLabel")
+        self.lbl_cpu.pack(pady=4)
         self.lbl_misc = ttk.Label(f)
         self.lbl_misc.pack(pady=4)
 
@@ -144,6 +146,9 @@ class App(tk.Tk):
         uah = read("/sys/class/power_supply/battery/charge_now", "0")
         uv = read("/sys/class/power_supply/battery/voltage_now", "0")
         freq = int(read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "0")) // 1000
+        fmax = int(read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", "0")) // 1000
+        fhw = int(read("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", "0")) // 1000
+        gov = read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "?")
 
         col = GOOD if temp < 60 else (WARN if temp < 72 else BAD)
         self.lbl_temp.configure(text=f"🌡 {temp:.1f}°C", foreground=col)
@@ -151,7 +156,13 @@ class App(tk.Tk):
         self.lbl_fan.configure(text=f"🌀 {rpm} rpm  (pwm {pwm} · {mode_txt})")
         self.lbl_bat.configure(
             text=f"🔋 {pct}%  ({int(uah)//1000} mAh · {int(uv)/1e6:.2f} V)")
-        self.lbl_misc.configure(text=f"CPU {freq} MHz · {time.strftime('%H:%M:%S')}")
+        # CPU: show live freq + max cap. If max < hardware max => underclocked (warn).
+        capped = fhw and fmax and fmax < fhw
+        cpu_col = WARN if capped else GOOD
+        cap_txt = f"⚠ cap {fmax} MHz" if capped else f"max {fmax} MHz"
+        self.lbl_cpu.configure(
+            text=f"⚡ CPU {freq} MHz  ({cap_txt} · {gov})", foreground=cpu_col)
+        self.lbl_misc.configure(text=f"{time.strftime('%H:%M:%S')}")
         self.after(2000, self._tick)
 
     # ── Quạt ──────────────────────────────────────────────────────
