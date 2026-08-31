@@ -169,3 +169,34 @@ Raspberry Pi OS Bookworm, kernel 6.12.47+rpt-rpi-v8) unless noted.
 - Optional hardware mod: DISP_RESET → GPIO for software panel control.
 - Propose the brightness-button documentation to ZitaoTech (undocumented
   in their README).
+
+## §12. Per-rail power research (31/8) — PANEL scanout là win lớn nhất
+
+Dùng `vcgencmd pmic_read_adc` đo dòng TỪNG RAIL chính xác (thay fuel gauge nhiễu 50mAh-step).
+
+**Awake idle:** ~3.6-4.2W. **Sleep (bản cũ):** 2650mW rails-only (~716mA@3.7V).
+
+A/B từng đòn bẩy:
+| Đòn bẩy | Kết quả | Verdict |
+|---|---|---|
+| Wifi `rfkill block` (đang làm) | rail 3V7_WL_SW 396→23mW, khi sleep =0 | ✅ đã đủ, khỏi đụng SDIO |
+| `rmmod brcmfmac` | 97mW (TỆ hơn rfkill!) | ❌ |
+| Unbind SDIO host | 14mW (+10mW vs rfkill), rebind OK | ❌ không đáng rủi ro |
+| PCIe ASPM powersupersave | không đo được saving (noise) | ❌ revert |
+| SD host unbind (mmc0) | ~70-120mW nhưng trong khoảng nhiễu | ⏸ chưa tích hợp |
+| USB autosuspend keyboard | không đo được saving rõ | ⏸ |
+| **DPI scanout off (`wlr-randr --off`)** | **tổng 4360→3300mW awake; sleep 2650→2069mW** | ✅ **TÍCH HỢP (PANEL_OFF=1)** |
+
+**Phát hiện chính:** nút màn hình hardware chỉ tắt ĐÈN NỀN. SoC vẫn đốt ~1W
+cho scanout (HVS + pixel clock + compositor render vào buffer không ai xem).
+`wlr-randr --output DPI-1 --off` cắt sạch phần này. VDD_CORE 1971→1547mW.
+
+**Sleep mới (PANEL_OFF=1): 2069mW rails-only ≈ 559mA@3.7V** (-22% vs 2650mW).
+Panel wake lại OK qua nhiều chu kỳ test. Rủi ro flicker TCON sau off rất lâu
+vẫn tồn tại (recover: nút màn / SW3) — đánh đổi chấp nhận được.
+
+**Chưa khai thác (cần reboot + anh quyết):**
+- `arm_freq_min=1500` là floor cao. Hạ xuống (nếu firmware cho) có thể cắt thêm
+  VDD_CORE ở idle/sleep — VDD_CORE sleep vẫn 1019mW, là mục tiêu lớn nhất còn lại.
+- Lưu ý đo: tổng PMIC rails ≠ dòng pin (thiếu backlight/carrier/converter loss).
+  Backlight vẫn phải tắt bằng nút hardware.

@@ -13,6 +13,8 @@ LOG_FILE="/var/log/pi-deepsleep.log"
 
 # ── Config ───────────────────────────────────────────────────────
 WIFI_OFF=1            # 1 = block wifi in sleep (kills remote chat/ssh; wake only via button)
+PANEL_OFF=1           # 1 = disable DPI scanout in sleep (~1W! backlight button alone does NOT
+                      #     stop SoC scanout/HVS). Wake restores. Recover if flicker: screen btn/SW3.
 KEEP_AGENT=1          # 1 = don't freeze AICoworker gateway (chat keeps working in sleep, can wake remotely)
 FAN_OFF=1             # 1 = stop fan in sleep (thermal watchdog below still protects)
 SD_OFF=1              # 1 = power off SD-card slot in sleep (~120mW; only safe when NOT booting from SD)
@@ -252,9 +254,11 @@ enter_deep_sleep() {
     echo "sleeping" > "$STATE_FILE"
     > "$SAVED_STATE_FILE"
 
-    # NOTE: panel is NOT touched here — the device has a dedicated screen
-    # button, and DPI panel off->on has a known flicker bug (see upstream).
-    # User turns the screen off manually.
+    # Disable DPI scanout: the hardware screen button only cuts BACKLIGHT;
+    # SoC keeps burning ~1W on scanout (HVS + pixel clock + compositor render).
+    # Measured 31/8: total 4.3W -> 3.3W with scanout off. Flicker risk on
+    # wake after very long off is accepted (recover: screen button / SW3).
+    if [ "$PANEL_OFF" = "1" ]; then panel_off; fi
 
     # Unbind touch controller (no input needed while sleeping)
     if [ -e "$TOUCH_DRIVER/$TOUCH_I2C_DEV" ]; then
@@ -351,6 +355,9 @@ exit_deep_sleep() {
 
     # Thaw processes first (restore them before anything else)
     thaw_processes
+
+    # Re-enable DPI scanout
+    if [ "$PANEL_OFF" = "1" ]; then panel_on; fi
 
     # Clear state (also stops the watchdog loop condition)
     rm -f "$STATE_FILE"
