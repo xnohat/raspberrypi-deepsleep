@@ -13,7 +13,7 @@ LOG_FILE="/var/log/pi-deepsleep.log"
 
 # ── Config ───────────────────────────────────────────────────────
 WIFI_OFF=1            # 1 = block wifi in sleep (kills remote chat/ssh; wake only via button)
-PANEL_OFF=0           # 1 = disable DPI scanout in sleep (~1W! backlight button alone does NOT
+PANEL_OFF=1           # 1 = disable DPI scanout in sleep (~1W! backlight button alone does NOT
                       #     stop SoC scanout/HVS). Wake restores. Recover if flicker: screen btn/SW3.
                       # NOTE: causes app jitter after wake (Jitsi) — keep 0, use PANEL_30HZ instead.
 PANEL_30HZ=0          # 1 = drop refresh 60->30Hz in sleep (halves pixel clock 36.8->19.75MHz,
@@ -185,7 +185,13 @@ panel_on() {
     rtdir="/run/user/$uid"
     timeout 10 sudo -u "$DISPLAY_USER" WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="$rtdir" \
         wlr-randr --output "$DISPLAY_OUTPUT" --on 2>/dev/null || true
-    log "Panel $DISPLAY_OUTPUT on"
+    # Anti-jitter: after re-enable, wait for the first frames then re-assert
+    # the native mode once more — a second clean modeset resets HVS/TCON
+    # timing that otherwise leaves apps (Jitsi) with a jittery screen.
+    sleep 2
+    timeout 10 sudo -u "$DISPLAY_USER" WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="$rtdir" \
+        wlr-randr --output "$DISPLAY_OUTPUT" --mode 720x720@59.999Hz 2>/dev/null || true
+    log "Panel $DISPLAY_OUTPUT on (+mode re-assert anti-jitter)"
 }
 
 # SD-card slot power off (~120mW measured via PMIC). Safe ONLY because this
