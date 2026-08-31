@@ -39,6 +39,13 @@ echo "── piterm ──"
 [ -x "$TARGET_HOME/.local/bin/piterm-attach" ] && ok "piterm-attach" || bad "piterm-attach missing"
 [ -f "$TARGET_HOME/.local/share/applications/piterm.desktop" ] && ok "piterm.desktop" || bad "piterm.desktop missing"
 
+echo "── pi power gui ──"
+[ -x /usr/local/bin/pipower-gui.py ] && ok "pipower-gui.py" || bad "pipower-gui.py missing"
+[ -x /usr/local/bin/pipower-apply.sh ] && ok "pipower-apply.sh" || bad "pipower-apply.sh missing"
+[ -f /etc/sudoers.d/pi-power-ui ] && ok "sudoers pi-power-ui" || bad "sudoers pi-power-ui missing"
+systemctl is-active battery-logger >/dev/null 2>&1 && ok "battery-logger active" || bad "battery-logger NOT active"
+python3 -c "import tkinter" 2>/dev/null && ok "python3-tk" || bad "python3-tk missing"
+
 echo "── fastboot hooks ──"
 grep -q "fastboot-restore" "$TARGET_HOME/.config/labwc/autostart" 2>/dev/null \
     && ok "labwc autostart hook" || bad "labwc autostart hook missing"

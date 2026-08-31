@@ -1,0 +1,11 @@
+[Unit]
+Description=Battery drain logger (per-minute)
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/battery-logger.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

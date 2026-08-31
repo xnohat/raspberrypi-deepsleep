@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Pi Power
+Comment=Fan curve, battery stats, sleep settings
+Exec=python3 /usr/local/bin/pipower-gui.py
+Icon=battery
+Type=Application
+Categories=System;Settings;

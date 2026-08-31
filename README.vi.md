@@ -54,7 +54,16 @@ dựng lại:
 - theme Tokyo Night, canh cho màn 720×720 (chạy vừa btop)
 - session sống xuyên qua Fastboot
 
-### 4. Daemon nút nguồn
+### 4. Pi Power (GUI desktop)
+App Tkinter ("Pi Power" trong menu): trạng thái live (nhiệt/quạt/pin) +
+nút hành động nhanh; **điều khiển quạt** — mode auto chỉnh curve 4 điểm
+kèm test nghe thử từng mức, hoặc mode manual kéo slider tốc độ cố định;
+**dashboard pin** — chart xả pin phân màu thức/sleep, mA trung bình +
+ước lượng thời lượng (data từ service battery-logger chạy nền);
+**cấu hình** — wifi/quạt/watchdog/thời gian giữ nút, lưu ăn ngay.
+Ghi hệ thống qua sudo helper hẹp quyền có validate + backup.
+
+### 5. Daemon nút nguồn
 Chạy evdev (device `pwr_button`, grab độc quyền — thay thế acpid/logind):
 - nhấn ngắn → toggle deep sleep
 - **giữ 2s → fastboot bắn NGAY khi còn đang giữ** (không race với lúc thả

@@ -58,7 +58,16 @@ on next boot:
 - Tokyo Night theme, sized for the 720×720 screen (btop fits)
 - sessions persist through Fastboot
 
-### 4. Power button daemon
+### 4. Pi Power (desktop GUI)
+Tkinter app ("Pi Power" in the app menu): live status (temp/fan/battery)
+with quick actions; **fan control** — auto mode with editable 4-point curve
+and an audible test per level, or manual fixed-speed slider; **battery
+dashboard** — drain chart colored by awake/sleep with average mA and
+runtime estimates (fed by the always-on battery-logger service);
+**settings** — wifi/fan/watchdog/button-hold, applied live. Privileged
+writes go through a narrow validated sudo helper with config backups.
+
+### 5. Power button daemon
 evdev-based (`pwr_button` device, exclusive grab — replaces acpid/logind
 handling):
 - short press → deep sleep toggle

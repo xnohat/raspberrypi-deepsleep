@@ -130,6 +130,23 @@ if '</openbox_config>' in s and '<windowRules>' not in s:
 PYEOF
 fi
 
+# ── 6b. Pi Power GUI + battery logger ────────────────────────────
+echo "[6b/8] Pi Power GUI..."
+apt-get install -y -qq python3-tk
+install -m 755 "$SCRIPT_DIR/ui/pipower-apply.sh" /usr/local/bin/
+install -m 755 "$SCRIPT_DIR/ui/pipower-gui.py"   /usr/local/bin/
+install -m 755 "$SCRIPT_DIR/battery-logger.sh"   /usr/local/bin/ 2>/dev/null || true
+cat > /etc/sudoers.d/pi-power-ui << SUDOEOF
+$TARGET_USER ALL=(root) NOPASSWD: /usr/local/bin/pipower-apply.sh
+SUDOEOF
+chmod 440 /etc/sudoers.d/pi-power-ui
+visudo -c -f /etc/sudoers.d/pi-power-ui >/dev/null
+install -m 644 "$SCRIPT_DIR/ui/battery-logger.service" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now battery-logger.service 2>/dev/null || true
+install -m 644 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/ui/pipower.desktop" "$TARGET_HOME/.local/share/applications/pipower.desktop"
+as_user update-desktop-database "$TARGET_HOME/.local/share/applications" 2>/dev/null || true
+
 # ── 7. Log file ──────────────────────────────────────────────────
 echo "[7/8] Log file..."
 touch /var/log/pi-deepsleep.log
