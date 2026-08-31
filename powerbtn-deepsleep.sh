@@ -40,9 +40,15 @@ EXCLUDE_PATTERNS+="|powerbtn-deepsl|powerbtn-daemon|deepsleep-|battery-log"
 # Never freeze 'sleep' children: the watchdog/logger loops block on `sleep N`;
 # freezing that child freezes the whole loop (watchdog dead = no fan safety!)
 EXCLUDE_PATTERNS+="|^sleep$"
-# Keep the AI agent gateway alive so the machine stays reachable in sleep
-if [ "$KEEP_AGENT" = "1" ]; then
+# Keep the AI agent gateway alive so the machine stays reachable in sleep.
+# BUT: if wifi is off, the agent is unreachable anyway — keeping its heavy
+# Electron/chromium stack awake would burn ~1A for nothing. So the agent is
+# only kept alive when it can actually be reached (KEEP_AGENT=1 AND wifi on).
+if [ "$KEEP_AGENT" = "1" ] && [ "$WIFI_OFF" != "1" ]; then
     EXCLUDE_PATTERNS+="|openclaw|aicoworker|crawbot"
+    AGENT_KEPT=1
+else
+    AGENT_KEPT=0
 fi
 
 log() {
@@ -82,7 +88,7 @@ trap restore_fan_failsafe TERM INT
 
 # Freeze non-essential user processes with SIGSTOP
 freeze_processes() {
-    log "Freezing non-essential processes..."
+    log "Freezing non-essential processes... (agent kept alive: ${AGENT_KEPT:-0})"
     local count=0
     local skipped_tty=0
     > "$STOPPED_PIDS_FILE"  # Clear file
