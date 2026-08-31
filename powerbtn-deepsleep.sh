@@ -15,6 +15,7 @@ LOG_FILE="/var/log/pi-deepsleep.log"
 WIFI_OFF=1            # 1 = block wifi in sleep (kills remote chat/ssh; wake only via button)
 KEEP_AGENT=1          # 1 = don't freeze AICoworker gateway (chat keeps working in sleep, can wake remotely)
 FAN_OFF=1             # 1 = stop fan in sleep (thermal watchdog below still protects)
+SD_OFF=1              # 1 = power off SD-card slot in sleep (~120mW; only safe when NOT booting from SD)
 WATCHDOG_TEMP=70000   # millidegC: watchdog re-enables fan above this
 WATCHDOG_INTERVAL=30  # seconds between watchdog temp checks
 # Stopped in sleep; only services that were ACTIVE before sleep are restarted
@@ -24,6 +25,7 @@ DISPLAY_USER=pi
 DISPLAY_OUTPUT="DPI-1"
 TOUCH_I2C_DEV="13-0048"
 TOUCH_DRIVER="/sys/bus/i2c/drivers/edt_ft5x06"
+SD_MMC_DEV="1000fff000.mmc"   # SD-card slot controller (mmc0). NOT the wifi SDIO (1001100000.mmc)!
 # ─────────────────────────────────────────────────────────────────
 
 # Processes that must NEVER be stopped (regex patterns)
@@ -159,6 +161,39 @@ panel_on() {
     log "Panel $DISPLAY_OUTPUT on"
 }
 
+# SD-card slot power off (~120mW measured via PMIC). Safe ONLY because this
+# device boots from NVMe — the SD card is just removable media. Unmounts any
+# mounted partitions first; unbind cuts vcc-sd regulator power to the slot.
+sd_off() {
+    [ "$SD_OFF" = "1" ] || return 0
+    # never touch it if root/boot lives on the SD card
+    case "$(findmnt -n -o SOURCE / 2>/dev/null)$(findmnt -n -o SOURCE /boot/firmware 2>/dev/null)" in
+        *mmcblk*) log "SD off skipped: system boots from SD"; return 0 ;;
+    esac
+    local drv
+    for d in /sys/bus/platform/drivers/*/"$SD_MMC_DEV"; do
+        [ -e "$d" ] && drv=$(dirname "$d") && break
+    done
+    [ -n "$drv" ] || { log "SD host driver not found"; return 0; }
+    # unmount any mounted partitions of mmcblk0
+    local m
+    for m in $(lsblk -n -o MOUNTPOINTS /dev/mmcblk0 2>/dev/null | grep -v '^$'); do
+        umount "$m" 2>/dev/null && echo "sd_mount=$m" >> "$SAVED_STATE_FILE"
+    done
+    if echo "$SD_MMC_DEV" > "$drv/unbind" 2>/dev/null; then
+        echo "sd_drv=$drv" >> "$SAVED_STATE_FILE"
+        log "SD-card slot powered off (unbound $SD_MMC_DEV)"
+    fi
+}
+
+sd_restore() {
+    local drv
+    drv=$(grep "^sd_drv=" "$SAVED_STATE_FILE" 2>/dev/null | cut -d= -f2)
+    [ -n "$drv" ] || return 0
+    echo "$SD_MMC_DEV" > "$drv/bind" 2>/dev/null && log "SD-card slot rebound"
+    # remount is left to udisks/user (removable media semantics)
+}
+
 # Fan control: off in sleep + background thermal watchdog as safety net
 fan_off_with_watchdog() {
     [ "$FAN_OFF" = "1" ] || return 0
@@ -273,6 +308,9 @@ enter_deep_sleep() {
     done
     log "USB + PCIe/NVMe runtime PM enabled"
 
+    # Power off SD-card slot (~120mW, boots from NVMe so SD is just media)
+    sd_off
+
     # NOTE: do NOT offline CPU cores — on CM5 PSCI CPU_ON fails (-22) and
     # cores stay dead until reboot. Use governor + freq cap instead.
     for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
@@ -351,6 +389,9 @@ exit_deep_sleep() {
     for dev in /sys/bus/pci/devices/*/power/control /sys/class/nvme/nvme*/device/power/control; do
         [ -f "$dev" ] && echo "on" > "$dev" 2>/dev/null || true
     done
+
+    # Re-power the SD-card slot
+    sd_restore
 
     # Set CPU to ondemand governor
     for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
