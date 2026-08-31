@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Pi Power — desktop GUI for HackberryPi CM5 power management.
 
-Tabs: Trạng thái (live) / Quạt (auto curve + manual) / Điện (battery
-chart + drain stats) / Cấu hình (sleep & button settings).
+Tabs: Status (live) / Fan (auto curve + manual) / Power (battery
+chart + drain stats) / Settings (sleep & button settings).
 Privileged writes go through `sudo pipower-apply.sh` (narrow rules).
 Tkinter only — no external dependencies. Sized for the 720×720 screen.
 """
@@ -87,10 +87,10 @@ class App(tk.Tk):
         self.tab_fan = ttk.Frame(nb)
         self.tab_power = ttk.Frame(nb)
         self.tab_cfg = ttk.Frame(nb)
-        nb.add(self.tab_status, text=" 📊 Trạng thái ")
-        nb.add(self.tab_fan, text=" 🌀 Quạt ")
-        nb.add(self.tab_power, text=" 🔋 Điện ")
-        nb.add(self.tab_cfg, text=" ⚙️ Cấu hình ")
+        nb.add(self.tab_status, text=" 📊 Status ")
+        nb.add(self.tab_fan, text=" 🌀 Fan ")
+        nb.add(self.tab_power, text=" 🔋 Power ")
+        nb.add(self.tab_cfg, text=" ⚙️ Settings ")
         self.nb = nb
 
         self._build_status()
@@ -101,7 +101,7 @@ class App(tk.Tk):
         self._tick()
         nb.bind("<<NotebookTabChanged>>", self._on_tab)
 
-    # ── Trạng thái ────────────────────────────────────────────────
+    # ── Status ────────────────────────────────────────────────
     def _build_status(self):
         f = self.tab_status
         self.lbl_temp = ttk.Label(f, style="Huge.TLabel")
@@ -122,14 +122,14 @@ class App(tk.Tk):
         row.pack(pady=8)
         ttk.Button(row, text="😴 Deep Sleep",
                    command=lambda: self._action("sleep",
-                       "Vào deep sleep? (màn đứng hình, bấm nút nguồn để dậy)")
+                       "Enter deep sleep? (screen freezes; press the power button to wake)")
                    ).pack(side="left", padx=8)
         ttk.Button(row, text="💾 Fastboot",
                    command=lambda: self._action("fastboot",
-                       "Lưu phiên làm việc và TẮT MÁY?")
+                       "Save session and SHUT DOWN?")
                    ).pack(side="left", padx=8)
         ttk.Button(row, text="🔄 Reboot", style="Danger.TButton",
-                   command=lambda: self._action("reboot", "Khởi động lại máy?")
+                   command=lambda: self._action("reboot", "Reboot the machine?")
                    ).pack(side="left", padx=8)
 
     def _action(self, do, confirm):
@@ -178,21 +178,21 @@ class App(tk.Tk):
             m = re.search(r"^CPU_UNDERCLOCK=([01])", cfg, re.M)
             on = m and m.group(1) == "1"
             self.lbl_ucfg.configure(
-                text=f"Underclock CPU khi sleep: {'BẬT' if on else 'tắt'}",
+                text=f"CPU underclock in sleep: {'ON' if on else 'off'}",
                 foreground=(WARN if on else GOOD))
         except Exception:
             self.lbl_ucfg.configure(text="")
         self.lbl_misc.configure(text=f"{time.strftime('%H:%M:%S')}")
         self.after(2000, self._tick)
 
-    # ── Quạt ──────────────────────────────────────────────────────
+    # ── Fan ──────────────────────────────────────────────────────
     def _build_fan(self):
         f = self.tab_fan
         self.fan_mode = tk.StringVar(value="auto")
         top = ttk.Frame(f)
         top.pack(fill="x", pady=(14, 6), padx=14)
-        ttk.Label(top, text="Chế độ:", style="Big.TLabel").pack(side="left")
-        for val, txt in (("auto", "🤖 Auto (theo nhiệt)"), ("manual", "✋ Manual")):
+        ttk.Label(top, text="Mode:", style="Big.TLabel").pack(side="left")
+        for val, txt in (("auto", "🤖 Auto (by temp)"), ("manual", "✋ Manual")):
             ttk.Radiobutton(top, text=txt, value=val, variable=self.fan_mode,
                             command=self._fan_mode_changed).pack(side="left", padx=10)
 
@@ -202,11 +202,15 @@ class App(tk.Tk):
         self.curve_canvas = tk.Canvas(self.fr_auto, bg="#16161e",
                                       highlightthickness=0, height=170)
         self.curve_canvas.pack(fill="x", pady=(8, 6))
+        # Make the chart interactive: click near a point to select it, drag to move it.
+        self.curve_canvas.bind("<Button-1>", self._curve_click)
+        self.curve_canvas.bind("<B1-Motion>", self._curve_drag)
+        self.curve_canvas.bind("<Configure>", lambda _e: self._curve_redraw())
         self.curve_vars = []
         self.sel_point = tk.IntVar(value=0)
         selrow = ttk.Frame(self.fr_auto)
         selrow.pack(fill="x", pady=2)
-        ttk.Label(selrow, text="Chọn mức:", style="Big.TLabel").pack(side="left")
+        ttk.Label(selrow, text="Select level:", style="Big.TLabel").pack(side="left")
         for i in range(4):
             ttk.Radiobutton(selrow, text=f"  {i+1}  ", value=i,
                             variable=self.sel_point,
@@ -219,14 +223,14 @@ class App(tk.Tk):
         # sliders operate on the SELECTED point
         gr = ttk.Frame(self.fr_auto)
         gr.pack(fill="x", pady=2)
-        ttk.Label(gr, text="🌡 Nhiệt:", width=9).grid(row=0, column=0, sticky="w")
+        ttk.Label(gr, text="🌡 Temp:", width=9).grid(row=0, column=0, sticky="w")
         self.sl_temp_val = ttk.Label(gr, width=6, font=("Sans", 13, "bold"),
                                      foreground=WARN)
         self.sl_temp_val.grid(row=0, column=2)
         self.sl_temp = ttk.Scale(gr, from_=35, to=88, orient="horizontal", length=440,
                                  command=lambda v: self._curve_slider("t", v))
         self.sl_temp.grid(row=0, column=1, padx=4)
-        ttk.Label(gr, text="🌀 Tốc độ:", width=9).grid(row=1, column=0, sticky="w")
+        ttk.Label(gr, text="🌀 Speed:", width=9).grid(row=1, column=0, sticky="w")
         self.sl_speed_val = ttk.Label(gr, width=6, font=("Sans", 13, "bold"),
                                       foreground=ACCENT)
         self.sl_speed_val.grid(row=1, column=2)
@@ -235,11 +239,11 @@ class App(tk.Tk):
         self.sl_speed.grid(row=1, column=1, padx=4)
         rowb = ttk.Frame(self.fr_auto)
         rowb.pack(pady=6)
-        ttk.Button(rowb, text="▶ Test mức này 5s",
+        ttk.Button(rowb, text="▶ Test this level 5s",
                    command=self._fan_test_selected).pack(side="left", padx=6)
-        ttk.Button(rowb, text="↩ Mặc định",
+        ttk.Button(rowb, text="↩ Default",
                    command=self._fan_reset_default).pack(side="left", padx=6)
-        ttk.Button(rowb, text="💾 Lưu curve (cần reboot)",
+        ttk.Button(rowb, text="💾 Save curve (reboot needed)",
                    command=self._fan_save).pack(side="left", padx=6)
         self.lbl_fan_msg = ttk.Label(self.fr_auto, foreground=GOOD)
         self.lbl_fan_msg.pack(pady=2)
@@ -260,11 +264,11 @@ class App(tk.Tk):
         for d in (-10, -1, +1, +10):
             ttk.Button(rowm, text=f"{d:+d}", width=5,
                        command=lambda d=d: self._man_nudge(d)).pack(side="left", padx=4)
-        ttk.Button(self.fr_manual, text="✋ Áp tốc độ này",
+        ttk.Button(self.fr_manual, text="✋ Apply this speed",
                    command=self._fan_manual_apply).pack(pady=10)
         ttk.Label(self.fr_manual, foreground=WARN,
-                  text="Manual giữ tốc độ cố định (bỏ qua nhiệt!).\n"
-                       "Chuyển về Auto để trả quạt cho hệ thống.").pack()
+                  text="Manual holds a fixed speed (ignores temperature!).\n"
+                       "Switch to Auto to return fan control to the system.").pack()
         self.lbl_man.configure(text=f"pwm {self.man_pwm.get()}")
 
         self._fan_load_curve()
@@ -315,6 +319,53 @@ class App(tk.Tk):
         else:
             sv.set(v)
             self.sl_speed_val.configure(text=str(v))
+
+    # Canvas geometry (shared by redraw + click/drag hit-testing)
+    _CV_PAD = (40, 14, 12, 24)   # left, right, top, bottom
+    _CV_TRANGE = (35, 88)        # tmin, tmax
+
+    def _cv_dims(self):
+        c = self.curve_canvas
+        return (c.winfo_width() or 640), (c.winfo_height() or 170)
+
+    def _cv_x(self, t):
+        w, _ = self._cv_dims()
+        pl, pr, _, _ = self._CV_PAD
+        tmin, tmax = self._CV_TRANGE
+        return pl + (w - pl - pr) * (t - tmin) / (tmax - tmin)
+
+    def _cv_inv(self, x, y):
+        """canvas px -> (temp, speed), clamped to axis range."""
+        w, h = self._cv_dims()
+        pl, pr, pt, pb = self._CV_PAD
+        tmin, tmax = self._CV_TRANGE
+        t = tmin + (x - pl) * (tmax - tmin) / max(w - pl - pr, 1)
+        s = 255 * (h - pb - y) / max(h - pt - pb, 1)
+        return max(tmin, min(tmax, t)), max(0, min(255, s))
+
+    def _curve_click(self, e):
+        # select the point whose handle is nearest in x
+        xs = [self._cv_x(tv.get()) for tv, _ in self.curve_vars]
+        i = min(range(4), key=lambda k: abs(xs[k] - e.x))
+        self.sel_point.set(i)
+        self._curve_sel_changed()
+        self._curve_drag(e)  # allow click-to-set immediately
+
+    def _curve_drag(self, e):
+        i = self.sel_point.get()
+        tv, sv = self.curve_vars[i]
+        t, s = self._cv_inv(e.x, e.y)
+        # keep temps strictly increasing between neighbours
+        lo = self.curve_vars[i - 1][0].get() + 1 if i > 0 else self._CV_TRANGE[0]
+        hi = self.curve_vars[i + 1][0].get() - 1 if i < 3 else self._CV_TRANGE[1]
+        tv.set(int(max(lo, min(hi, t))))
+        sv.set(int(s))
+        self._updating_sliders = True
+        self.sl_temp.set(tv.get()); self.sl_speed.set(sv.get())
+        self._updating_sliders = False
+        self.sl_temp_val.configure(text=f"{tv.get()}°C")
+        self.sl_speed_val.configure(text=str(sv.get()))
+        self._curve_redraw()
 
     def _curve_redraw(self):
         c = getattr(self, "curve_canvas", None)
@@ -374,13 +425,13 @@ class App(tk.Tk):
             tv.set(t)
             sv.set(spd)
         self._curve_sel_changed()
-        self.lbl_fan_msg.configure(text="Đã nạp curve mặc định (chưa lưu — bấm Lưu nếu ưng)",
+        self.lbl_fan_msg.configure(text="Loaded default curve (not saved — press Save to keep)",
                                    foreground=WARN)
 
     def _fan_test_selected(self):
         i = self.sel_point.get()
         pwm = self.curve_vars[i][1].get()
-        self.lbl_fan_msg.configure(text=f"Đang quay pwm {pwm} trong 5s...",
+        self.lbl_fan_msg.configure(text=f"Spinning pwm {pwm} for 5s...",
                                    foreground=WARN)
         self.update()
         ok, out = apply_cmd("fan-test", pwm, 5)
@@ -395,7 +446,7 @@ class App(tk.Tk):
             self.fr_auto.pack(fill="both", expand=True, padx=14)
             ok, out = apply_cmd("fan-auto")
             self.lbl_fan_msg.configure(
-                text="Đã trả quạt về auto" if ok else out, 
+                text="Fan returned to auto" if ok else out, 
                 foreground=GOOD if ok else BAD)
 
     def _man_nudge(self, d):
@@ -405,15 +456,15 @@ class App(tk.Tk):
     def _fan_manual_apply(self):
         ok, out = apply_cmd("fan-manual", self.man_pwm.get())
         messagebox.showinfo("Pi Power", out, parent=self) if not ok else None
-        self.lbl_man.configure(text=f"pwm {self.man_pwm.get()} ✓" if ok else "lỗi")
+        self.lbl_man.configure(text=f"pwm {self.man_pwm.get()} ✓" if ok else "error")
 
     def _fan_save(self):
         pts = [(tv.get(), sv.get()) for tv, sv in self.curve_vars]
         if any(pts[i][0] >= pts[i+1][0] for i in range(3)):
-            self.lbl_fan_msg.configure(text="Nhiệt độ phải tăng dần!", foreground=BAD)
+            self.lbl_fan_msg.configure(text="Temperatures must increase!", foreground=BAD)
             return
         if not messagebox.askyesno("Pi Power",
-                "Ghi curve mới vào config.txt?\n(backup tự động, cần reboot để ăn)",
+                "Write new curve to config.txt?\n(auto backup; reboot required)",
                 parent=self):
             return
         args = []
@@ -422,12 +473,12 @@ class App(tk.Tk):
         ok, out = apply_cmd("fan-save", *args)
         self.lbl_fan_msg.configure(text=out, foreground=GOOD if ok else BAD)
 
-    # ── Điện ──────────────────────────────────────────────────────
+    # ── Power ──────────────────────────────────────────────────────
     def _build_power(self):
         f = self.tab_power
         top = ttk.Frame(f)
         top.pack(fill="x", padx=10, pady=(10, 2))
-        ttk.Label(top, text="Khung giờ:", style="Big.TLabel").pack(side="left")
+        ttk.Label(top, text="Time range:", style="Big.TLabel").pack(side="left")
         self.pw_hours = tk.IntVar(value=24)
         for h in (6, 24, 72):
             ttk.Radiobutton(top, text=f"{h}h", value=h, variable=self.pw_hours,
@@ -460,7 +511,7 @@ class App(tk.Tk):
         h = c.winfo_height() or 300
         if len(series) < 2:
             c.create_text(w // 2, h // 2, fill=DIM, font=("Sans", 13),
-                          text="Chưa đủ dữ liệu — battery logger đang thu thập...")
+                          text="Not enough data — battery logger is collecting...")
             self.lbl_drain.configure(text="")
             return
         t0, t1 = series[0][0], series[-1][0]
@@ -481,7 +532,7 @@ class App(tk.Tk):
                 c.create_line(prev[0], prev[1], x, y, fill=col, width=3)
             prev = (x, y)
         c.create_text(pad + 6, 12, anchor="w", fill=ACCENT, font=("Sans", 10),
-                      text="── thức")
+                      text="── awake")
         c.create_text(pad + 90, 12, anchor="w", fill=GOOD, font=("Sans", 10),
                       text="── sleep")
         # drain stats
@@ -501,26 +552,26 @@ class App(tk.Tk):
                 ma = uah_ / 1000 / h_
                 if ma > 10:
                     est = cap / ma
-                    parts.append(f"{'Thức' if st=='AWAKE' else 'Sleep'}: "
-                                 f"~{ma:.0f} mA (pin đầy ≈ {est:.1f}h)")
+                    parts.append(f"{'Awake' if st=='AWAKE' else 'Sleep'}: "
+                                 f"~{ma:.0f} mA (full ≈ {est:.1f}h)")
                 elif ma < -10:
-                    parts.append(f"{'Thức' if st=='AWAKE' else 'Sleep'}: "
-                                 f"sạc +{-ma:.0f} mA")
-        self.lbl_drain.configure(text="\n".join(parts) or "Chưa đủ dữ liệu xả pin")
+                    parts.append(f"{'Awake' if st=='AWAKE' else 'Sleep'}: "
+                                 f"charging +{-ma:.0f} mA")
+        self.lbl_drain.configure(text="\n".join(parts) or "Not enough drain data")
 
-    # ── Cấu hình ──────────────────────────────────────────────────
+    # ── Settings ──────────────────────────────────────────────────
     def _build_cfg(self):
         f = self.tab_cfg
         self.cfg_vars = {}
         rows = [
-            ("WIFI_OFF", "Tắt wifi khi sleep (trâu pin, mất remote)", "bool"),
-            ("FAN_OFF", "Tắt quạt khi sleep (watchdog vẫn gác)", "bool"),
-            ("KEEP_AGENT", "Giữ AI gateway sống khi sleep", "bool"),
-            ("PANEL_OFF", "Tắt scanout màn hình khi sleep (−0.6W, có thể giật màn sau khi dậy — tắt/bật màn bằng nút để hết)", "bool"),
-            ("SD_OFF", "Tắt khe thẻ SD khi sleep (−0.1W, an toàn vì boot từ NVMe)", "bool"),
-            ("CPU_UNDERCLOCK", "Ép xung CPU thấp khi sleep (tiết kiệm ít, dậy chậm hơn)", "bool"),
-            ("WATCHDOG_TEMP", "Ngưỡng bật lại quạt khi sleep (°C)", "temp"),
-            ("LONG_MS", "Giữ nút bao lâu để Fastboot (giây)", "sec"),
+            ("WIFI_OFF", "Turn off wifi in sleep (saves battery, loses remote)", "bool"),
+            ("FAN_OFF", "Turn off fan in sleep (watchdog still guards)", "bool"),
+            ("KEEP_AGENT", "Keep AI gateway alive in sleep", "bool"),
+            ("PANEL_OFF", "Turn off screen scanout in sleep (−0.6W; screen may jitter after wake — toggle the screen button to fix)", "bool"),
+            ("SD_OFF", "Power off SD card slot in sleep (−0.1W; safe since booting from NVMe)", "bool"),
+            ("CPU_UNDERCLOCK", "Underclock CPU in sleep (small saving, slower wake)", "bool"),
+            ("WATCHDOG_TEMP", "Fan re-enable threshold in sleep (°C)", "temp"),
+            ("LONG_MS", "Button hold time for Fastboot (seconds)", "sec"),
         ]
         box = ttk.Frame(f)
         box.pack(fill="x", padx=16, pady=14)
@@ -551,7 +602,7 @@ class App(tk.Tk):
                     ttk.Button(fr, text="+", width=3,
                                command=lambda v=v: v.set(min(10, round(v.get() + 0.5, 1)))).pack(side="left")
             self.cfg_vars[key] = v
-        ttk.Button(f, text="💾 Lưu cấu hình (ăn ngay)",
+        ttk.Button(f, text="💾 Save settings (applies now)",
                    command=self._cfg_save).pack(pady=10)
         self.lbl_cfg_msg = ttk.Label(f, foreground=GOOD)
         self.lbl_cfg_msg.pack()
@@ -581,7 +632,7 @@ class App(tk.Tk):
         args += ["WATCHDOG_TEMP", int(self.cfg_vars["WATCHDOG_TEMP"].get()) * 1000]
         args += ["LONG_MS", int(float(self.cfg_vars["LONG_MS"].get()) * 1000)]
         ok, out = apply_cmd("config-set", *args)
-        self.lbl_cfg_msg.configure(text=out if out else ("đã lưu" if ok else "lỗi"),
+        self.lbl_cfg_msg.configure(text=out if out else ("saved" if ok else "error"),
                                    foreground=GOOD if ok else BAD)
 
     def _on_tab(self, _):
