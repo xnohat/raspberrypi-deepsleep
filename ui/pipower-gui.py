@@ -62,6 +62,13 @@ class App(tk.Tk):
         self.title("Pi Power")
         self.geometry("700x660")
         self.configure(bg=BG)
+        # Ensure the window is always closable even when the compositor draws no
+        # title-bar close button (labwc/wayland rootless): Escape / Ctrl-Q / Ctrl-W quit,
+        # and the WM close button is wired to a clean exit.
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.bind("<Control-q>", lambda _e: self.destroy())
+        self.bind("<Control-w>", lambda _e: self.destroy())
 
         style = ttk.Style(self)
         style.theme_use("clam")
@@ -131,6 +138,7 @@ class App(tk.Tk):
         ttk.Button(row, text="🔄 Reboot", style="Danger.TButton",
                    command=lambda: self._action("reboot", "Reboot the machine?")
                    ).pack(side="left", padx=8)
+        ttk.Button(row, text="✕ Close", command=self.destroy).pack(side="left", padx=8)
 
     def _action(self, do, confirm):
         if messagebox.askyesno("Pi Power", confirm, parent=self):
