@@ -60,7 +60,17 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Pi Power")
-        self.geometry("700x660")
+        # Fit small handheld screens (HackberryPi is 720x720): never open larger
+        # than the screen and always anchor at top-left so the tab bar + buttons
+        # stay on-screen (else they land under the panel / off the top edge and
+        # the window looks "frozen" — can't switch tabs or reach Close).
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        ww = min(700, sw)
+        wh = min(660, sh - 40)   # leave room for a top/bottom panel
+        self.geometry(f"{ww}x{wh}+0+0")
+        self.resizable(True, True)
+        self.minsize(360, 400)
         self.configure(bg=BG)
         # Ensure the window is always closable even when the compositor draws no
         # title-bar close button (labwc/wayland rootless): Escape / Ctrl-Q / Ctrl-W quit,
