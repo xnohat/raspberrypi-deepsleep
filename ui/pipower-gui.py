@@ -9,9 +9,21 @@ Tkinter only — no external dependencies. Sized for the 720×720 screen.
 import os
 import re
 import subprocess
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
+
+# Single-instance guard: double-clicking the desktop shortcut must not stack
+# overlapping windows (the top one looks "frozen" — can't switch tabs / close).
+_LOCK_PATH = f"/tmp/pipower-gui-{os.getuid()}.lock"
+try:
+    import fcntl
+    _lock_fh = open(_LOCK_PATH, "w")
+    fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except (OSError, IOError):
+    sys.stderr.write("Pi Power already running — focusing existing window.\n")
+    sys.exit(0)
 
 APPLY = ["sudo", "-n", "/usr/local/bin/pipower-apply.sh"]
 CONFIG_TXT = "/boot/firmware/config.txt"
@@ -66,9 +78,11 @@ class App(tk.Tk):
         # the window looks "frozen" — can't switch tabs or reach Close).
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        ww = min(700, sw)
-        wh = min(660, sh - 40)   # leave room for a top/bottom panel
-        self.geometry(f"{ww}x{wh}+0+0")
+        ww = min(680, sw)
+        wh = min(620, sh - 60)   # leave room for a top/bottom panel
+        # Size only — let the compositor place it (forcing +0+0 can hide the
+        # title bar under the desktop panel). Just guarantee it fits the screen.
+        self.geometry(f"{ww}x{wh}")
         self.resizable(True, True)
         self.minsize(360, 400)
         self.configure(bg=BG)
