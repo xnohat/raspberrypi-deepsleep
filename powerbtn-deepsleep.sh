@@ -97,6 +97,21 @@ freeze_processes() {
     local skipped_tty=0
     > "$STOPPED_PIDS_FILE"  # Clear file
 
+    # CRITICAL: protect PIDs of essential systemd services BY PID, not comm.
+    # The button daemon runs as "python3" (ExecStart=/usr/bin/python3 ...) so
+    # comm-based excludes MISS it -> frozen daemon = power button dead in
+    # sleep = user must hard-reboot (happened 31/8 20:12). Never again.
+    local protected_pids=" "
+    local svc mp cp
+    for svc in powerbtn-daemon battery-logger deepsleep-watchdog; do
+        mp=$(systemctl show -p MainPID --value "$svc.service" 2>/dev/null)
+        if [ -n "$mp" ] && [ "$mp" != "0" ]; then
+            protected_pids+="$mp "
+            # also protect their direct children
+            for cp in $(pgrep -P "$mp" 2>/dev/null); do protected_pids+="$cp "; done
+        fi
+    done
+
     # Get all user processes (not kernel threads) with TTY info
     while read -r pid tty comm; do
         # Skip kernel threads (PPID 2 or comm in brackets)
@@ -104,6 +119,9 @@ freeze_processes() {
 
         # Skip if matches exclude patterns
         echo "$comm" | grep -qE "$EXCLUDE_PATTERNS" && continue
+
+        # Skip protected service PIDs (button daemon etc.)
+        [[ "$protected_pids" == *" $pid "* ]] && continue
 
         # Skip PID 1, 2 and our own process tree
         [[ "$pid" -le 2 ]] && continue
