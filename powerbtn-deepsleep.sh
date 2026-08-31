@@ -21,7 +21,9 @@ PANEL_30HZ=0          # 1 = drop refresh 60->30Hz in sleep (halves pixel clock 3
                       #     gentler than full off — no mode teardown, less TCON risk)
 KEEP_AGENT=1          # 1 = don't freeze AICoworker gateway (chat keeps working in sleep, can wake remotely)
 FAN_OFF=1             # 1 = stop fan in sleep (thermal watchdog below still protects)
-SD_OFF=1              # 1 = power off SD-card slot in sleep (~120mW; only safe when NOT booting from SD)
+SD_OFF=1              # 1 = power off SD-card slot in sleep (~120mW; auto-skipped if / or /boot on SD)
+CPU_UNDERCLOCK=0      # 1 = powersave governor + cap CPU to min freq in sleep. DEFAULT OFF
+                      #     (marginal saving when already frozen; keeps wake snappy).
 WATCHDOG_TEMP=70000   # millidegC: watchdog re-enables fan above this
 WATCHDOG_INTERVAL=30  # seconds between watchdog temp checks
 # Stopped in sleep; only services that were ACTIVE before sleep are restarted
@@ -368,18 +370,23 @@ enter_deep_sleep() {
 
     # NOTE: do NOT offline CPU cores — on CM5 PSCI CPU_ON fails (-22) and
     # cores stay dead until reboot. Use governor + freq cap instead.
-    for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-        [ -f "$cpu" ] && echo "powersave" > "$cpu" 2>/dev/null || true
-    done
-    # Cap max frequency to minimum available (restored on wake)
-    minfreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null)
-    if [ -n "$minfreq" ]; then
-        echo "maxfreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)" >> "$SAVED_STATE_FILE"
-        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
-            [ -f "$cpu" ] && echo "$minfreq" > "$cpu" 2>/dev/null || true
+    if [ "$CPU_UNDERCLOCK" = "1" ]; then
+        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            [ -f "$cpu" ] && echo "powersave" > "$cpu" 2>/dev/null || true
         done
+        # Cap max frequency to minimum available (restored on wake)
+        minfreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null)
+        if [ -n "$minfreq" ]; then
+            echo "maxfreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)" >> "$SAVED_STATE_FILE"
+            for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+                [ -f "$cpu" ] && echo "$minfreq" > "$cpu" 2>/dev/null || true
+            done
+        fi
+        echo "cpu_underclock=1" >> "$SAVED_STATE_FILE"
+        log "CPU set to powersave + freq capped to ${minfreq}"
+    else
+        log "CPU underclock disabled (CPU_UNDERCLOCK=0) — governor untouched"
     fi
-    log "CPU set to powersave + freq capped to ${minfreq}"
 
     # Stop the fan + start thermal watchdog
     fan_off_with_watchdog
@@ -417,15 +424,17 @@ exit_deep_sleep() {
     # Fan back to kernel auto control
     fan_restore
 
-    # Restore CPU max frequency
-    maxfreq=$(grep "^maxfreq=" "$SAVED_STATE_FILE" 2>/dev/null | cut -d= -f2)
-    [ -z "$maxfreq" ] && maxfreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)
-    if [ -n "$maxfreq" ]; then
-        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
-            [ -f "$cpu" ] && echo "$maxfreq" > "$cpu" 2>/dev/null || true
-        done
+    # Restore CPU max frequency (only if it was capped on sleep)
+    if grep -q "^cpu_underclock=1" "$SAVED_STATE_FILE" 2>/dev/null; then
+        maxfreq=$(grep "^maxfreq=" "$SAVED_STATE_FILE" 2>/dev/null | cut -d= -f2)
+        [ -z "$maxfreq" ] && maxfreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)
+        if [ -n "$maxfreq" ]; then
+            for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+                [ -f "$cpu" ] && echo "$maxfreq" > "$cpu" 2>/dev/null || true
+            done
+        fi
+        log "CPU max freq restored to ${maxfreq}"
     fi
-    log "CPU max freq restored to ${maxfreq}"
 
     # Unblock radios via rfkill
     rfkill unblock wifi 2>/dev/null || true

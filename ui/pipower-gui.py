@@ -487,6 +487,7 @@ class App(tk.Tk):
             ("KEEP_AGENT", "Giữ AI gateway sống khi sleep", "bool"),
             ("PANEL_OFF", "Tắt scanout màn hình khi sleep (−0.6W, có thể giật màn sau khi dậy — tắt/bật màn bằng nút để hết)", "bool"),
             ("SD_OFF", "Tắt khe thẻ SD khi sleep (−0.1W, an toàn vì boot từ NVMe)", "bool"),
+            ("CPU_UNDERCLOCK", "Ép xung CPU thấp khi sleep (tiết kiệm ít, dậy chậm hơn)", "bool"),
             ("WATCHDOG_TEMP", "Ngưỡng bật lại quạt khi sleep (°C)", "temp"),
             ("LONG_MS", "Giữ nút bao lâu để Fastboot (giây)", "sec"),
         ]
@@ -531,7 +532,7 @@ class App(tk.Tk):
         def var(text, key):
             m = re.search(rf"^{key}=(\S+)", text, re.M)
             return m.group(1) if m else None
-        for k in ("WIFI_OFF", "FAN_OFF", "KEEP_AGENT", "PANEL_OFF", "SD_OFF"):
+        for k in ("WIFI_OFF", "FAN_OFF", "KEEP_AGENT", "PANEL_OFF", "SD_OFF", "CPU_UNDERCLOCK"):
             v = var(sl, k)
             if v is not None:
                 self.cfg_vars[k].set(int(v))
@@ -544,7 +545,7 @@ class App(tk.Tk):
 
     def _cfg_save(self):
         args = []
-        for k in ("WIFI_OFF", "FAN_OFF", "KEEP_AGENT", "PANEL_OFF", "SD_OFF"):
+        for k in ("WIFI_OFF", "FAN_OFF", "KEEP_AGENT", "PANEL_OFF", "SD_OFF", "CPU_UNDERCLOCK"):
             args += [k, int(self.cfg_vars[k].get())]
         args += ["WATCHDOG_TEMP", int(self.cfg_vars["WATCHDOG_TEMP"].get()) * 1000]
         args += ["LONG_MS", int(float(self.cfg_vars["LONG_MS"].get()) * 1000)]
