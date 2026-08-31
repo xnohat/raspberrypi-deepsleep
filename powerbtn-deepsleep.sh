@@ -13,7 +13,7 @@ LOG_FILE="/var/log/pi-deepsleep.log"
 
 # ── Config ───────────────────────────────────────────────────────
 WIFI_OFF=1            # 1 = block wifi in sleep (kills remote chat/ssh; wake only via button)
-PANEL_OFF=1           # 1 = disable DPI scanout in sleep (~1W! backlight button alone does NOT
+PANEL_OFF=0           # 1 = disable DPI scanout in sleep (~1W! backlight button alone does NOT
                       #     stop SoC scanout/HVS). Wake restores. Recover if flicker: screen btn/SW3.
 KEEP_AGENT=1          # 1 = don't freeze AICoworker gateway (chat keeps working in sleep, can wake remotely)
 FAN_OFF=1             # 1 = stop fan in sleep (thermal watchdog below still protects)
