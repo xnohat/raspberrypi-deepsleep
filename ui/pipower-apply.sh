@@ -94,7 +94,7 @@ config-set)
     while [ $# -ge 2 ]; do
         k="$1"; v="$2"; shift 2
         case "$k" in
-        WIFI_OFF|FAN_OFF|KEEP_AGENT|PANEL_OFF)
+        WIFI_OFF|FAN_OFF|KEEP_AGENT|PANEL_OFF|SD_OFF)
             [[ "$v" =~ ^[01]$ ]] || { echo "bad $k"; exit 1; }
             sed -i "s/^${k}=[01]/${k}=${v}/" "$SLEEP_SH" ;;
         WATCHDOG_TEMP)
