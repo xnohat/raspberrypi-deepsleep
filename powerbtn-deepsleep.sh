@@ -15,6 +15,9 @@ LOG_FILE="/var/log/pi-deepsleep.log"
 WIFI_OFF=1            # 1 = block wifi in sleep (kills remote chat/ssh; wake only via button)
 PANEL_OFF=0           # 1 = disable DPI scanout in sleep (~1W! backlight button alone does NOT
                       #     stop SoC scanout/HVS). Wake restores. Recover if flicker: screen btn/SW3.
+                      # NOTE: causes app jitter after wake (Jitsi) — keep 0, use PANEL_30HZ instead.
+PANEL_30HZ=0          # 1 = drop refresh 60->30Hz in sleep (halves pixel clock 36.8->19.75MHz,
+                      #     gentler than full off — no mode teardown, less TCON risk)
 KEEP_AGENT=1          # 1 = don't freeze AICoworker gateway (chat keeps working in sleep, can wake remotely)
 FAN_OFF=1             # 1 = stop fan in sleep (thermal watchdog below still protects)
 SD_OFF=1              # 1 = power off SD-card slot in sleep (~120mW; only safe when NOT booting from SD)
@@ -216,6 +219,24 @@ sd_restore() {
     # remount is left to udisks/user (removable media semantics)
 }
 
+panel_30hz() {
+    local rtdir uid
+    uid=$(id -u "$DISPLAY_USER" 2>/dev/null) || return 0
+    rtdir="/run/user/$uid"
+    timeout 10 sudo -u "$DISPLAY_USER" WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="$rtdir" \
+        wlr-randr --output "$DISPLAY_OUTPUT" --custom-mode 720x720@30Hz 2>/dev/null || true
+    log "Panel $DISPLAY_OUTPUT -> 30Hz"
+}
+
+panel_60hz() {
+    local rtdir uid
+    uid=$(id -u "$DISPLAY_USER" 2>/dev/null) || return 0
+    rtdir="/run/user/$uid"
+    timeout 10 sudo -u "$DISPLAY_USER" WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="$rtdir" \
+        wlr-randr --output "$DISPLAY_OUTPUT" --mode 720x720@59.999Hz 2>/dev/null || true
+    log "Panel $DISPLAY_OUTPUT -> 60Hz"
+}
+
 # Fan control: off in sleep + background thermal watchdog as safety net
 fan_off_with_watchdog() {
     [ "$FAN_OFF" = "1" ] || return 0
@@ -278,7 +299,8 @@ enter_deep_sleep() {
     # SoC keeps burning ~1W on scanout (HVS + pixel clock + compositor render).
     # Measured 31/8: total 4.3W -> 3.3W with scanout off. Flicker risk on
     # wake after very long off is accepted (recover: screen button / SW3).
-    if [ "$PANEL_OFF" = "1" ]; then panel_off; fi
+    if [ "$PANEL_OFF" = "1" ]; then panel_off;
+    elif [ "$PANEL_30HZ" = "1" ]; then panel_30hz; fi
 
     # Unbind touch controller (no input needed while sleeping)
     if [ -e "$TOUCH_DRIVER/$TOUCH_I2C_DEV" ]; then
@@ -376,8 +398,9 @@ exit_deep_sleep() {
     # Thaw processes first (restore them before anything else)
     thaw_processes
 
-    # Re-enable DPI scanout
-    if [ "$PANEL_OFF" = "1" ]; then panel_on; fi
+    # Re-enable DPI scanout / restore refresh
+    if [ "$PANEL_OFF" = "1" ]; then panel_on;
+    elif [ "$PANEL_30HZ" = "1" ]; then panel_60hz; fi
 
     # Clear state (also stops the watchdog loop condition)
     rm -f "$STATE_FILE"
