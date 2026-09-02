@@ -102,28 +102,28 @@ static void max17048_read (float *crate, float *vcell)
  * flicker. */
 static int max17048_charging (void)
 {
-    static int   state      = -1;                 /* LATCHED across polls */
-    static float prev_vcell = -1.0f;
+    /* Charge state from the MAX17048 CRATE register only.
+     *
+     * Measured on the HackberryPi (60 s trace): there is NO fast/reliable
+     * charge signal on this board — the EXT5V rail reads ~5.17 V whether the
+     * cable is in or out (it is the system rail, not the USB input), and VCELL
+     * swings ±50 mV from CPU/display load, so a VCELL edge detector just
+     * flickers. CRATE is heavily smoothed but STABLE, so it is the only sane
+     * signal. Hysteresis (±3 %/hr) holds the state in the noisy band. The cost
+     * is ~30 s lag on plug/unplug, and near-full with a weak charger CRATE can
+     * stay negative — i.e. the pack is genuinely not gaining charge, so no bolt
+     * is the honest answer. */
+    static int state = -1;                        /* latched in the deadband */
     float crate, vcell;
     max17048_read (&crate, &vcell);
+    (void) vcell;
 
-    /* Fast + stable: a sharp VCELL edge (plug/unplug) FLIPS and LATCHES the
-     * state; between edges the state is held. Voltage stays elevated the whole
-     * time a charger is connected and drops when it is removed, so this does not
-     * flicker the way re-deriving from the smoothed CRATE every poll did. */
-    if (prev_vcell > 0.0f && vcell > 0.0f)
+    if (crate > -900.0f)
     {
-        float dv = vcell - prev_vcell;
-        if (dv >= 0.022f) state = 1;              /* sudden rise  => plugged in */
-        else if (dv <= -0.022f) state = 0;        /* sudden drop  => unplugged  */
+        if (crate >= 3.0f) state = 1;             /* clearly charging   */
+        else if (crate <= -3.0f) state = 0;       /* clearly discharging*/
+        /* else: hold previous state (noise deadband) */
     }
-    /* Seed the state on startup (before any edge is seen) from CRATE. */
-    if (state == -1 && crate > -900.0f)
-    {
-        if (crate >= 1.5f) state = 1;
-        else if (crate <= -1.5f) state = 0;
-    }
-    if (vcell > 0.0f) prev_vcell = vcell;
     return state;
 }
 
