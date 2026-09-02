@@ -102,21 +102,26 @@ static void max17048_read (float *crate, float *vcell)
  * flicker. */
 static int max17048_charging (void)
 {
+    static int   state      = -1;                 /* LATCHED across polls */
     static float prev_vcell = -1.0f;
     float crate, vcell;
     max17048_read (&crate, &vcell);
 
-    int state = -1;
-    if (crate > -900.0f)                          /* steady state from CRATE */
+    /* Fast + stable: a sharp VCELL edge (plug/unplug) FLIPS and LATCHES the
+     * state; between edges the state is held. Voltage stays elevated the whole
+     * time a charger is connected and drops when it is removed, so this does not
+     * flicker the way re-deriving from the smoothed CRATE every poll did. */
+    if (prev_vcell > 0.0f && vcell > 0.0f)
+    {
+        float dv = vcell - prev_vcell;
+        if (dv >= 0.022f) state = 1;              /* sudden rise  => plugged in */
+        else if (dv <= -0.022f) state = 0;        /* sudden drop  => unplugged  */
+    }
+    /* Seed the state on startup (before any edge is seen) from CRATE. */
+    if (state == -1 && crate > -900.0f)
     {
         if (crate >= 1.5f) state = 1;
         else if (crate <= -1.5f) state = 0;
-    }
-    if (prev_vcell > 0.0f && vcell > 0.0f)        /* fast override from VCELL jump */
-    {
-        float dv = vcell - prev_vcell;
-        if (dv >= 0.018f) state = 1;              /* sudden rise  => plugged in */
-        else if (dv <= -0.018f) state = 0;        /* sudden drop  => unplugged  */
     }
     if (vcell > 0.0f) prev_vcell = vcell;
     return state;
