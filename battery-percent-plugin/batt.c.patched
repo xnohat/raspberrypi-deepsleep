@@ -46,10 +46,21 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
 
-/* Returns charge rate in %/hr (signed), or -1000 on error (unknown). */
-static float max17048_crate (void)
+static int max17048_read_reg (int fd, unsigned char reg)
 {
-    /* resolve the i2c bus of the *-0036 device (bus number varies across boots) */
+    unsigned char buf[2] = {0, 0};
+    if (write (fd, &reg, 1) == 1 && read (fd, buf, 2) == 2)
+        return (buf[0] << 8) | buf[1];            /* big-endian word */
+    return -1;
+}
+
+/* Read CRATE (%/hr, signed) and VCELL (volts) in one bus transaction.
+ * *crate = -1000 / *vcell = -1 on error. */
+static void max17048_read (float *crate, float *vcell)
+{
+    *crate = -1000.0f;
+    *vcell = -1.0f;
+
     int bus = -1;
     DIR *d = opendir ("/sys/bus/i2c/devices");
     if (d)
@@ -62,27 +73,53 @@ static float max17048_crate (void)
         }
         closedir (d);
     }
-    if (bus < 0) return -1000.0f;
+    if (bus < 0) return;
 
     char path[32];
     snprintf (path, sizeof (path), "/dev/i2c-%d", bus);
     int fd = open (path, O_RDWR);
-    if (fd < 0) return -1000.0f;
+    if (fd < 0) return;
 
-    float rate = -1000.0f;
     if (ioctl (fd, I2C_SLAVE_FORCE, 0x36) >= 0)
     {
-        unsigned char reg = 0x16;                 /* CRATE register */
-        unsigned char buf[2] = {0, 0};
-        if (write (fd, &reg, 1) == 1 && read (fd, buf, 2) == 2)
+        int vc = max17048_read_reg (fd, 0x02);    /* VCELL */
+        int cr = max17048_read_reg (fd, 0x16);    /* CRATE */
+        if (vc >= 0) *vcell = vc * 78.125f / 1000000.0f;
+        if (cr >= 0)
         {
-            int raw = (buf[0] << 8) | buf[1];     /* big-endian */
-            if (raw >= 0x8000) raw -= 0x10000;    /* signed */
-            rate = raw * 0.208f;                  /* %/hr per LSB */
+            if (cr >= 0x8000) cr -= 0x10000;
+            *crate = cr * 0.208f;
         }
     }
     close (fd);
-    return rate;
+}
+
+/* Charging state: 1 = charging, 0 = discharging, -1 = unknown.
+ * CRATE gives an accurate STEADY-STATE reading but the register is heavily
+ * smoothed (~30 s to settle), so plug/unplug feels laggy. VCELL jumps within a
+ * second when a charger connects/disconnects, so a sudden VCELL delta is used
+ * for FAST response and CRATE for the steady state. A deadband on each avoids
+ * flicker. */
+static int max17048_charging (void)
+{
+    static float prev_vcell = -1.0f;
+    float crate, vcell;
+    max17048_read (&crate, &vcell);
+
+    int state = -1;
+    if (crate > -900.0f)                          /* steady state from CRATE */
+    {
+        if (crate >= 1.5f) state = 1;
+        else if (crate <= -1.5f) state = 0;
+    }
+    if (prev_vcell > 0.0f && vcell > 0.0f)        /* fast override from VCELL jump */
+    {
+        float dv = vcell - prev_vcell;
+        if (dv >= 0.018f) state = 1;              /* sudden rise  => plugged in */
+        else if (dv <= -0.018f) state = 0;        /* sudden drop  => unplugged  */
+    }
+    if (vcell > 0.0f) prev_vcell = vcell;
+    return state;
 }
 
 /*----------------------------------------------------------------------------*/
@@ -90,7 +127,7 @@ static float max17048_crate (void)
 /*----------------------------------------------------------------------------*/
 
 #define SIM_INTERVAL 500
-#define INTERVAL 5000
+#define INTERVAL 2000
 
 /* Battery states */
 typedef enum
@@ -169,17 +206,14 @@ static int charge_level (PtBattPlugin *pt, status_t *status, int *tim)
         }
         else *status = STAT_DISCHARGING;
         /* Some fuel gauges (MAX17048) report no sysfs charge status, so the
-         * check above always says "discharging". Override from the CRATE
-         * register with a small deadband so the bolt does not flicker. */
+         * check above always says "discharging". Detect it from the gauge
+         * (fast VCELL jump + steady CRATE). */
         {
-            float cr = max17048_crate ();
-            if (cr > -900.0f)
-            {
-                if (cr >= 1.5f)
-                    *status = (b->percentage >= 100) ? STAT_EXT_POWER : STAT_CHARGING;
-                else if (cr <= -1.5f)
-                    *status = STAT_DISCHARGING;
-            }
+            int chg = max17048_charging ();
+            if (chg == 1)
+                *status = (b->percentage >= 100) ? STAT_EXT_POWER : STAT_CHARGING;
+            else if (chg == 0)
+                *status = STAT_DISCHARGING;
         }
         mins = b->seconds;
         mins /= 60;
