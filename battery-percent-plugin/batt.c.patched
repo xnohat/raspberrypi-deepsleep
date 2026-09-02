@@ -113,44 +113,53 @@ static int max17048_charging (void)
      * is ~30 s lag on plug/unplug, and near-full with a weak charger CRATE can
      * stay negative — i.e. the pack is genuinely not gaining charge, so no bolt
      * is the honest answer. */
-    static int   state = -1;                      /* latched */
-    static float ema   = -1.0f;                   /* fast-smoothed VCELL */
-    static float base  = -1.0f;                   /* slow baseline VCELL */
-    static int   up = 0, dn = 0;                  /* edge confirmation counters */
+    /* State machine (poll = ~2 s). A confirmed VCELL edge flips the state and
+       opens a HOLD window during which the slow/noisy CRATE may reinforce but
+       may NOT contradict — this is what stops the flicker (previously CRATE
+       could override the VCELL latch every poll). After the hold expires, only a
+       SUSTAINED CRATE polarity corrects the state. Thresholds are set above the
+       observed ±50 mV VCELL load noise (35 mV smoothed gap, confirmed 3x). */
+    static int   state = -1;                       /* latched charge state */
+    static int   hold  = 0;                        /* polls left where CRATE can't override */
+    static float ema   = -1.0f;                    /* fast-smoothed VCELL */
+    static float base  = -1.0f;                    /* slow baseline VCELL */
+    static int   up = 0, dn = 0;                   /* VCELL edge confirmation */
+    static int   cpos = 0, cneg = 0;               /* CRATE sustained confirmation */
+    const int    HOLD_CHG = 30;                    /* ~60 s after a plug edge */
+    const int    HOLD_DIS = 12;                    /* ~24 s after an unplug edge */
     float crate, vcell;
     max17048_read (&crate, &vcell);
 
-    /* --- VCELL path (fast): plug/unplug shifts the terminal voltage level.
-       VCELL is noisy (±50 mV from load), so smooth it (EMA) and compare against
-       a slow baseline; a sustained gap, confirmed over a few polls, is a real
-       plug/unplug edge — brief load spikes do not survive the confirmation. */
     if (vcell > 0.0f)
     {
         if (ema < 0.0f) { ema = base = vcell; }
-        ema  = 0.5f  * ema  + 0.5f  * vcell;      /* ~1-2 poll smoothing */
-        base = 0.95f * base + 0.05f * vcell;      /* slow level (~40 s)  */
+        ema  = 0.5f  * ema  + 0.5f  * vcell;
+        base = 0.95f * base + 0.05f * vcell;
         float gap = ema - base;
-        if (gap >= 0.030f) { up++; dn = 0; }      /* lifted above baseline */
-        else if (gap <= -0.030f) { dn++; up = 0; }/* dropped below baseline */
+        if (gap >= 0.035f) { up++; dn = 0; }
+        else if (gap <= -0.035f) { dn++; up = 0; }
         else { up = 0; dn = 0; }
-        if (up >= 2) state = 1;                    /* confirmed plug   */
-        else if (dn >= 2) state = 0;               /* confirmed unplug */
+        if (up >= 3) { state = 1; hold = HOLD_CHG; up = 0; }   /* confirmed plug   */
+        else if (dn >= 3) { state = 0; hold = HOLD_DIS; dn = 0; } /* confirmed unplug */
     }
 
-    /* --- CRATE path (accurate, slow): a clearly positive rate proves the pack
-       is really gaining charge — trust it. A mildly negative rate near full does
-       NOT force "discharging" (the cable may still be in), so only a strongly
-       negative rate corrects a stuck charging latch. */
     if (crate > -900.0f)
     {
-        if (crate >= 3.0f) state = 1;
-        else if (crate <= -5.0f) state = 0;
-        if (state == -1)                           /* seed at startup */
+        if (crate >= 3.0f) { cpos++; cneg = 0; }
+        else if (crate <= -3.0f) { cneg++; cpos = 0; }
+        else { cpos = 0; cneg = 0; }
+        if (hold == 0)                             /* CRATE only corrects after the hold */
+        {
+            if (cpos >= 3) state = 1;              /* sustained real charging  */
+            else if (cneg >= 3) state = 0;         /* sustained real discharge */
+        }
+        if (state == -1)                           /* startup seed */
         {
             if (crate >= 1.5f) state = 1;
             else if (crate <= -1.5f) state = 0;
         }
     }
+    if (hold > 0) hold--;
     return state;
 }
 
