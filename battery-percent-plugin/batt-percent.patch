@@ -1,0 +1,159 @@
+diff --git a/src/batt.c b/src/batt.c
+index 5b6db50..e879ae6 100644
+--- a/src/batt.c
++++ b/src/batt.c
+@@ -33,10 +33,58 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include "plugin.h"
+ #else
+ #include "lxutils.h"
++#include "configure.h"
+ #endif
+ 
+ #include "batt.h"
+ 
++/* MAX17048 fuel-gauge CRATE (charge rate) — used to detect charging on devices
++ * whose battery sysfs exposes no `status` (e.g. HackberryPi CM5). */
++#include <fcntl.h>
++#include <unistd.h>
++#include <dirent.h>
++#include <sys/ioctl.h>
++#include <linux/i2c-dev.h>
++
++/* Returns charge rate in %/hr (signed), or -1000 on error (unknown). */
++static float max17048_crate (void)
++{
++    /* resolve the i2c bus of the *-0036 device (bus number varies across boots) */
++    int bus = -1;
++    DIR *d = opendir ("/sys/bus/i2c/devices");
++    if (d)
++    {
++        struct dirent *e;
++        while ((e = readdir (d)))
++        {
++            int b;
++            if (sscanf (e->d_name, "%d-0036", &b) == 1) { bus = b; break; }
++        }
++        closedir (d);
++    }
++    if (bus < 0) return -1000.0f;
++
++    char path[32];
++    snprintf (path, sizeof (path), "/dev/i2c-%d", bus);
++    int fd = open (path, O_RDWR);
++    if (fd < 0) return -1000.0f;
++
++    float rate = -1000.0f;
++    if (ioctl (fd, I2C_SLAVE_FORCE, 0x36) >= 0)
++    {
++        unsigned char reg = 0x16;                 /* CRATE register */
++        unsigned char buf[2] = {0, 0};
++        if (write (fd, &reg, 1) == 1 && read (fd, buf, 2) == 2)
++        {
++            int raw = (buf[0] << 8) | buf[1];     /* big-endian */
++            if (raw >= 0x8000) raw -= 0x10000;    /* signed */
++            rate = raw * 0.208f;                  /* %/hr per LSB */
++        }
++    }
++    close (fd);
++    return rate;
++}
++
+ /*----------------------------------------------------------------------------*/
+ /* Typedefs and macros                                                        */
+ /*----------------------------------------------------------------------------*/
+@@ -58,8 +106,8 @@ typedef enum
+ /*----------------------------------------------------------------------------*/
+ 
+ conf_table_t conf_table[2] = {
+-    {CONF_TYPE_INT,  "batt_num", N_("Battery number to monitor"),   NULL},
+-    {CONF_TYPE_NONE, NULL,       NULL,                              NULL}
++    {CONF_INT,  "batt_num", N_("Battery number to monitor")},
++    {CONF_NONE, NULL,       NULL}
+ };
+ 
+ /*----------------------------------------------------------------------------*/
+@@ -120,6 +168,19 @@ static int charge_level (PtBattPlugin *pt, status_t *status, int *tim)
+             else *status = STAT_CHARGING;
+         }
+         else *status = STAT_DISCHARGING;
++        /* Some fuel gauges (MAX17048) report no sysfs charge status, so the
++         * check above always says "discharging". Override from the CRATE
++         * register with a small deadband so the bolt does not flicker. */
++        {
++            float cr = max17048_crate ();
++            if (cr > -900.0f)
++            {
++                if (cr >= 1.5f)
++                    *status = (b->percentage >= 100) ? STAT_EXT_POWER : STAT_CHARGING;
++                else if (cr <= -1.5f)
++                    *status = STAT_DISCHARGING;
++            }
++        }
+         mins = b->seconds;
+         mins /= 60;
+         *tim = mins;
+@@ -184,18 +245,59 @@ static void draw_icon (PtBattPlugin *pt, int lev, float r, float g, float b, int
+     cairo_rectangle (cr, 5, 4, f, h - 8);
+     cairo_fill (cr);
+ 
+-    // show icons
+-    if (powered == 1 && pt->flash)
++    // charging bolt (small, drawn as a path so no emoji font is needed).
++    if (powered == 1)
+     {
+-        gdk_cairo_set_source_pixbuf (cr, pt->flash, (w >> 1) - 15, (h >> 1) - 16);
+-        cairo_paint (cr);
++        double bs = h - 6;
++        double ox = 0.5, oy = 3.0;
++        double bpts[7][2] = {{0.55,0.0},{0.15,0.55},{0.45,0.55},
++                             {0.30,1.0},{0.85,0.40},{0.52,0.40},{0.70,0.0}};
++        cairo_new_path (cr);
++        for (int i = 0; i < 7; i++)
++        {
++            double X = ox + bpts[i][0] * bs;
++            double Y = oy + bpts[i][1] * bs;
++            if (i) cairo_line_to (cr, X, Y); else cairo_move_to (cr, X, Y);
++        }
++        cairo_close_path (cr);
++        cairo_set_source_rgb (cr, 1.0, 0.82, 0.10);
++        cairo_fill_preserve (cr);
++        cairo_set_source_rgb (cr, 0.25, 0.20, 0.0);
++        cairo_set_line_width (cr, 0.6);
++        cairo_stroke (cr);
+     }
+-    if (powered == 2 && pt->plug)
++    else if (powered == 2 && pt->plug)
+     {
+         gdk_cairo_set_source_pixbuf (cr, pt->plug, (w >> 1) - 16, (h >> 1) - 16);
+         cairo_paint (cr);
+     }
+ 
++    // draw the charge percentage number inside the battery body
++    if (lev >= 0)
++    {
++        char pct[8];
++        snprintf (pct, sizeof (pct), "%d", lev);
++        cairo_select_font_face (cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
++        double fs = (lev >= 100) ? h - 9 : h - 5;
++        if (fs < 9) fs = 9;
++        cairo_set_font_size (cr, fs);
++        cairo_text_extents_t ext;
++        cairo_text_extents (cr, pct, &ext);
++        double bx0 = (powered == 1) ? (h - 6) * 0.6 + 1 : 2.0;
++        double bx1 = w - 4.0;
++        double tx = bx0 + ((bx1 - bx0) - ext.width) / 2 - ext.x_bearing;
++        double ty = (h - ext.height) / 2 - ext.y_bearing;
++        if (tx < 1) tx = 1;
++        cairo_move_to (cr, tx, ty);
++        cairo_set_line_width (cr, 2.2);
++        cairo_set_source_rgb (cr, 0.10, 0.10, 0.12);
++        cairo_text_path (cr, pct);
++        cairo_stroke (cr);
++        cairo_move_to (cr, tx, ty);
++        cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
++        cairo_show_text (cr, pct);
++    }
++
+     // create a pixbuf from the cairo surface
+     GdkPixbuf *pixbuf = gdk_pixbuf_get_from_surface (surface, 0, 0, w, h);
+ 
