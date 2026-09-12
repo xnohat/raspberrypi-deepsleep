@@ -224,23 +224,44 @@ Quan sát:
 - Bug gặp: `-daemonize` làm hỏng `-display gtk` + `-incoming` → dùng
   `setsid` + chờ QMP socket. `sync` file RAM trước khi quit.
 
-### 6.1 Câu hỏi "guest phải giống y OS host, kernel gốc"
-Làm được **về phần mềm**: guest có thể boot chính rootfs Pi OS của anh
-(cùng kernel `6.12.47+rpt-rpi-v8` — đã có virtio_blk/net/pci/gpu/input/
-balloon/9p dạng module). Cần: (1) initrd riêng có virtio (initrd host hiện
-0 module virtio); (2) verify kernel RPi boot được máy `-M virt` (thiếu
-`CONFIG_PCI_HOST_GENERIC`/`ARCH_VIRT` trong config host → có thể phải dùng
-virtio-mmio hoặc build lại kernel RPi với 2 option đó — vẫn là kernel RPi);
-(3) rootfs Pi OS trên partition riêng (host chạy từ partition tối giản
-khác) hoặc qcow2 clone. Kiến trúc = ESXi-style: host mỏng (labwc + QEMU +
-powerbtn), "máy thật" là VM.
+### 6.1 Câu hỏi "guest phải giống y OS host, kernel gốc" (đã sửa 00:35)
+**Đính chính:** kiểm tra lại `/proc/config.gz` — kernel RPi 6.12.47 stock
+**không có** `CONFIG_VIRTIO_BLK/NET/PCI/MMIO` lẫn `PCI_HOST_GENERIC` (chỉ có
+`VIRTIO_VSOCKETS_COMMON=m`, `VIRTIO_MENU=y`; không có file `virtio*.ko` nào
+trong `/lib/modules`). Câu "kernel host có virtio module" em nói trước đó là
+SAI. Initrd không tạo ra driver được → **kernel stock không boot được cấu
+hình QEMU `-M virt` này**. Còn "dùng chung đúng kernel đang chạy của host"
+thì đó là container (namespaces), không phải KVM.
 
-**Không làm được về phần cứng:** trong VM không có V3D (GL/Vulkan/waydroid
-mất), màn/touch/pin/quạt/wifi là của host, guest chỉ thấy qua virtio. Nhiệt
-cao hơn do render CPU. Đây là giới hạn KVM trên BCM2712 (không passthrough
-GPU), không phụ thuộc image.
+Cái làm được: **userspace Pi OS y hệt** (rootfs Pi OS, user pi, package,
+docker data) + một trong hai kernel guest:
+- (a) kernel Debian generic arm64 (`linux-image-arm64`, đã chứng minh boot
+  KVM ở prototype) — không có patch RPi nhưng trong VM không cần;
+- (b) kernel RPi tự build thêm virtio + PCI_HOST_GENERIC — giữ "chất RPi",
+  tốn 1-2h build, không đụng kernel host.
+Rootfs guest phải là bản sao **có giới hạn** (host đang dùng 338G/468G, 172G
+ngoài docker → không clone nguyên cả `/`); không bao giờ gắn partition root
+host đang mount vào guest ở chế độ ghi.
+
+**GPU:** V3D (`1002000000.v3d`) không có iommu_group, host không có
+`vfio-platform` → không passthrough. VirGL/venus trong guest **có thể** cho
+GL/Vulkan (chưa test trên V3D host) nhưng QEMU 10 chặn migration khi bật
+virgl → **không thể vừa có GPU tăng tốc vừa snapshot VM**. Hybrid khả dĩ:
+app cần GPU (waydroid, game) chạy ở host, phần còn lại trong guest.
+
+**Nhiệt (đính chính):** số 65.9°C vs 63.9°C chỉ là 1 điểm đo + pause 20s,
+`ps %CPU` là trung bình đời process — **chưa đủ** để kết luận VM nóng hơn
+bao nhiêu. Chỉ chắc: guest desktop render bằng CPU nên có tải nền; cần đo
+A/B ≥10 phút nếu muốn số thật.
+
+**Lưu ý prototype:** lần restore pass 2 fail đầu tiên là do gọi `restore`
+thiếu `RAM=4096 DISPLAY_MODE=gtk` (rơi về default 2GB/none → cấu hình lệch
+với snapshot), không chỉ vì `-daemonize`. Bài học: cấu hình máy phải được
+**ghi vào file cạnh snapshot** và restore đọc từ đó, không truyền qua env.
 
 ### 6.2 Bước tiếp (chưa làm, cần anh duyệt)
-1. Thử boot kernel RPi + rootfs Pi OS clone trong KVM (verify mục 6.1 (2)).
-2. Nếu OK: thiết kế host-mỏng + guest-Pi-OS + tích hợp vào powerbtn
-   (long-press = save VM + shutdown; boot = auto restore).
+1. Chọn kernel guest (a) Debian generic hay (b) RPi rebuild + virtio.
+2. Tạo rootfs guest bounded (debootstrap/rsync có exclude, ≤30G) mang
+   userspace Pi OS; boot KVM; verify docker + AICoworker trong guest.
+3. vm.sh v2: config file cạnh snapshot, fail-fast QMP, PID chính xác.
+4. Test host power-cycle thật (save → shutdown → boot → restore).
