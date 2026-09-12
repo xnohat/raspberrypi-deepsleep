@@ -194,7 +194,7 @@ Pass/fail rõ: counter liên tục = PASS; mọi thứ khác = FAIL với log.
 
 Tài nguyên: ~25GB NVMe tạm, ~30-40 phút, không reboot host.
 
-## 6. Kết quả prototype (2026-09-13 00:05–00:22) — PASS cả 2 pass
+## 6. Kết quả prototype (2026-09-13 00:05–00:22) — guest-state checkpoint PASS (cùng host, 1 lần/pass)
 
 Script: `docs/hibernate-proto-vm.sh` (qemu -M virt -accel kvm -cpu host,
 mapped-ram + multifd 4 + direct-io, QMP qua unix socket). Guest: Debian 12
@@ -211,8 +211,9 @@ Quan sát:
 - Save/restore không tỉ lệ với RAM cấp cho guest mà với **RAM đang dùng**
   (mapped-ram bỏ qua zero page): 2GB và 4GB guest đều ~1.3-1.4GB file, ~9.5s.
   Ước lượng guest 8GB dùng thật 5-6GB → save ~30-40s, restore ~15-20s.
-- Restore 4.5s = QEMU khởi tạo + đọc file (lazy, MAP_PRIVATE) + `cont`; guest
-  tiếp tục ngay, không thấy "resume lag" trong terminal.
+- Restore 4.5s = QEMU khởi tạo + nạp file + `cont` (số đo 1 lần, chưa lặp).
+  Đây là checkpoint trạng thái guest trên cùng host — **chưa** test chu
+  trình tắt/bật nguồn host thật.
 - **Nhiệt/CPU:** guest desktop idle (XFCE + chromium mở example.com) → qemu
   14–45% một core trên host (render CPU vì không có GPU trong guest), SoC
   65.9°C / quạt 2954rpm; pause VM 20s → 63.9°C. Headless guest ≈ 0%. → VM có
@@ -302,38 +303,37 @@ ghi cạnh snapshot và `restore` đọc từ đó (RAM/CPUS/DISPLAY_MODE/NOGPU)
 ### 7.1 Patch QEMU bỏ blocker — TEST THẬT: SEGFAULT (01:16–01:55)
 
 Build QEMU 10.0.2 từ source (`--enable-virglrenderer --enable-opengl
---enable-gtk --enable-kvm`, ~50 phút trên 4 core A76, SoC lên 76°C) với patch
+--enable-gtk --enable-kvm`, 4 core A76) với patch
 `docs/hibernate-qemu-virgl-unblock.patch` (bỏ `migrate_add_blocker` khi env
-`QEMU_GPU_ALLOW_MIGRATE=1`, opt-in).
+`QEMU_GPU_ALLOW_MIGRATE=1`, opt-in). ⚠️ Patch này là **thí nghiệm, không an
+toàn, không dùng thường** — nó chỉ tắt cảnh báo, không thêm code lưu GPU.
 
+Cấu hình test: **`virtio-gpu-gl-pci` in-process** (không phải vhost-user-gpu).
 Kết quả: guest virgl (renderer `virgl (V3D 7.1.10.2)`) → QMP `stop` →
-`migrate file:` với mapped-ram → status `active` ~5s → **QEMU segfault
-(exit 139)**, file RAM dở dang 4.4GB.
+`migrate file:` mapped-ram → status `active` ~5s → **QEMU segfault
+(exit 139)**, file RAM dở dang 4.4GB. Không có core dump/backtrace.
 
-Nguyên nhân (đọc source, không đoán): `hw/display/virtio-gpu.c
-virtio_gpu_save()` duyệt `g->reslist` và ghi
-`pixman_image_get_data(res->image)` cho mọi resource không-blob. Resource
-do virgl tạo (`virtio-gpu-virgl.c virgl_cmd_create_resource_2d` →
-`virgl_renderer_resource_create`) **không có `res->image`** — pixel nằm
-trong GL texture của host (V3D), QEMU không giữ bản copy → NULL deref.
-Tức blocker "virgl is not yet migratable" không phải cờ hành chính; nó
-chặn đúng chỗ code save không biết serialize GPU resource.
+Nguyên nhân **khả dĩ (suy từ source, chưa xác nhận bằng backtrace)**:
+`hw/display/virtio-gpu.c virtio_gpu_save()` duyệt `g->reslist` và ghi
+`pixman_image_get_data(res->image)` cho mọi resource không-blob; resource do
+virgl tạo (`virtio-gpu-virgl.c virgl_cmd_create_resource_2d`) không có
+`res->image` (pixel nằm trong GL texture của host) → NULL deref. Blocker
+"virgl is not yet migratable" do đó không phải cờ hành chính mà chặn đúng
+code path chưa biết serialize GPU resource.
 
-Để đi tiếp phải viết thật: (1) đọc ngược mọi resource từ virglrenderer về
-RAM lúc save (`virgl_renderer_transfer_read_iov` cho từng resource + GL
-context/shader/fence state — virglrenderer **không có API** export toàn bộ
-context), (2) tái tạo lúc load. Đây là feature upstream chưa có ai làm
-(crosvm mới có snapshot resource sơ khai, không có context). Ngoài tầm
-prototype 1 đêm.
+**Verdict (trong phạm vi đã test):** các cách đã thử — hot-unplug trên QEMU
+stock, vhost-user-gpu, và patch bỏ blocker với `virtio-gpu-gl-pci` — đều
+không cho "3D + snapshot". Chưa chứng minh được tổ hợp nào chạy; cũng
+**chưa** chứng minh mọi hướng đều bất khả (chưa thử vhost-user-gpu + patch,
+chưa thử guest 2 GPU với GL render-only + stop app GL trước save). Đi tiếp
+đúng nghĩa cần QEMU/virglrenderer lưu được GPU resource/context — hiện
+không thấy sẵn.
 
-**Verdict hybrid:** ❌ với QEMU/virglrenderer hiện tại. 3D-trong-VM (virgl
-V3D) ✅ chạy tốt, nhưng **không thể** snapshot VM khi GPU-gl đang gắn, và
-không rút GPU ra được (hotpluggable=false). Hai lựa chọn còn lại:
-- **2D + hibernate** (đã PASS §6) — GUI trong guest render CPU, app cần GPU
-  chạy ở host.
-- **3D không hibernate** — guest virgl, tắt bằng fastboot-style
+Hai lựa chọn thực dụng:
+- **2D + guest-state checkpoint** (§6, đã chạy trên cùng host; chưa test qua
+  tắt/bật nguồn host thật).
+- **3D không snapshot** — guest virgl, dừng bằng fastboot-style
   reconstruction như hiện tại.
 
-Binary patched giữ ở `/home/pi/vmproto/build/qemu-10.0.2/b/` (không cài
-vào hệ thống), script test `hibernate-proto-vm.sh` hỗ trợ `QEMU_BIN`,
-`DISPLAY_MODE=gl`.
+Binary patched ở `/home/pi/vmproto/build/qemu-10.0.2/b/` (không cài vào hệ
+thống); `hibernate-proto-vm.sh` hỗ trợ `QEMU_BIN`, `DISPLAY_MODE=gl`.
