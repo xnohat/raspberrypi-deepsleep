@@ -193,3 +193,54 @@ pideepsleep, xoá sạch sau khi xong.
 Pass/fail rõ: counter liên tục = PASS; mọi thứ khác = FAIL với log.
 
 Tài nguyên: ~25GB NVMe tạm, ~30-40 phút, không reboot host.
+
+## 6. Kết quả prototype (2026-09-13 00:05–00:22) — PASS cả 2 pass
+
+Script: `docs/hibernate-proto-vm.sh` (qemu -M virt -accel kvm -cpu host,
+mapped-ram + multifd 4 + direct-io, QMP qua unix socket). Guest: Debian 12
+generic arm64 cloud image + cloud-init (podman, chrony), disk qcow2 30G.
+
+| Pass | Guest | Save | Restore | RAM file | Bằng chứng continuity |
+|---|---|---|---|---|---|
+| 1 headless | 2GB, podman container counter | **9.8s** | **4.5s** | 1.4GB thực (2.3GB logical, sparse) | counter 46 → 48 → 52 sau restore; uptime 132→135s; podman `Up` liên tục |
+| 2 desktop | 4GB, XFCE + chromium + xfce4-terminal đếm tick, virtio-gpu 2D, `-display gtk` trên labwc host | **9.4s** | **4.5s** | 1.3GB thực (4.4GB logical) | uptime 404→409s, chromium 10 proc giữ nguyên, terminal tiếp tục đếm tick 305→327; ảnh `hibernate-proto-pass2-*.png` |
+
+Quan sát:
+- KVM thật (`-cpu host` → guest thấy Cortex-A76), không TCG. Guest boot
+  cloud-init ~40s lần đầu.
+- Save/restore không tỉ lệ với RAM cấp cho guest mà với **RAM đang dùng**
+  (mapped-ram bỏ qua zero page): 2GB và 4GB guest đều ~1.3-1.4GB file, ~9.5s.
+  Ước lượng guest 8GB dùng thật 5-6GB → save ~30-40s, restore ~15-20s.
+- Restore 4.5s = QEMU khởi tạo + đọc file (lazy, MAP_PRIVATE) + `cont`; guest
+  tiếp tục ngay, không thấy "resume lag" trong terminal.
+- **Nhiệt/CPU:** guest desktop idle (XFCE + chromium mở example.com) → qemu
+  14–45% một core trên host (render CPU vì không có GPU trong guest), SoC
+  65.9°C / quạt 2954rpm; pause VM 20s → 63.9°C. Headless guest ≈ 0%. → VM có
+  desktop **nóng hơn host-native ~2°C ở idle**, và sẽ tệ hơn khi có
+  animation/video (mọi frame là CPU).
+- Màn hình: guest 720×720 qua `xrandr --newmode`, hiển thị trong cửa sổ gtk
+  của QEMU trên labwc (có thể fullscreen). Bàn phím/chuột qua
+  virtio-keyboard/tablet OK (migratable).
+- Bug gặp: `-daemonize` làm hỏng `-display gtk` + `-incoming` → dùng
+  `setsid` + chờ QMP socket. `sync` file RAM trước khi quit.
+
+### 6.1 Câu hỏi "guest phải giống y OS host, kernel gốc"
+Làm được **về phần mềm**: guest có thể boot chính rootfs Pi OS của anh
+(cùng kernel `6.12.47+rpt-rpi-v8` — đã có virtio_blk/net/pci/gpu/input/
+balloon/9p dạng module). Cần: (1) initrd riêng có virtio (initrd host hiện
+0 module virtio); (2) verify kernel RPi boot được máy `-M virt` (thiếu
+`CONFIG_PCI_HOST_GENERIC`/`ARCH_VIRT` trong config host → có thể phải dùng
+virtio-mmio hoặc build lại kernel RPi với 2 option đó — vẫn là kernel RPi);
+(3) rootfs Pi OS trên partition riêng (host chạy từ partition tối giản
+khác) hoặc qcow2 clone. Kiến trúc = ESXi-style: host mỏng (labwc + QEMU +
+powerbtn), "máy thật" là VM.
+
+**Không làm được về phần cứng:** trong VM không có V3D (GL/Vulkan/waydroid
+mất), màn/touch/pin/quạt/wifi là của host, guest chỉ thấy qua virtio. Nhiệt
+cao hơn do render CPU. Đây là giới hạn KVM trên BCM2712 (không passthrough
+GPU), không phụ thuộc image.
+
+### 6.2 Bước tiếp (chưa làm, cần anh duyệt)
+1. Thử boot kernel RPi + rootfs Pi OS clone trong KVM (verify mục 6.1 (2)).
+2. Nếu OK: thiết kế host-mỏng + guest-Pi-OS + tích hợp vào powerbtn
+   (long-press = save VM + shutdown; boot = auto restore).
