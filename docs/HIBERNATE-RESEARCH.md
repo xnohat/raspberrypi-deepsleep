@@ -3,15 +3,15 @@
 Ngày: 2026-09-12. Máy: CM5 Lite (BCM2712, 4× Cortex-A76), 16GB RAM, NVMe
 (đọc ~370MB/s, ghi ~440MB/s direct), kernel 6.12.47+rpt-rpi-v8, Bookworm,
 QEMU 10.0.2, Docker 29.1.3 (/var/lib/docker 285GB), podman/CRIU chưa cài.
-Bối cảnh: FINDINGS §6 (hibernate stock = không), fake-sleep ~1270mA, fastboot
-= reconstruction. Câu hỏi: có cách nào cho "hibernate thật" mà vẫn chạy được
+Bối cảnh: FINDINGS §6 (hibernate stock = không), fake-sleep chỉ giảm ~50% so
+với thức (số đo còn nhiễu, xem memory 2026-08-31), fastboot = reconstruction. Câu hỏi: có cách nào cho "hibernate thật" mà vẫn chạy được
 docker/podman không?
 
 ## 0. Kết luận ngắn
 
 | Hướng | Verdict | Vì sao |
 |---|---|---|
-| **A. Guest-state hibernation** — workload chạy trong 1 VM KVM ARM64, "ngủ" = QEMU save RAM+state ra file → host tắt hẳn (0mA) → boot host 16s → restore VM | ✅ **Khả thi nhất**, cần prototype | KVM VHE chạy OK trên máy (đã boot VM `-accel kvm`). QEMU 10.0.2 có `mapped-ram`+`multifd` (ghi song song, O_DIRECT). Docker/Podman trong guest **không cần nested virt**. |
+| **A. Guest-state hibernation** — workload chạy trong 1 VM KVM ARM64, "ngủ" = QEMU save RAM+state ra file → host tắt hẳn (drain ≈ fastboot) → boot host 16s → restore VM | ✅ **Khả thi nhất**, cần prototype | KVM VHE chạy OK trên máy (đã boot VM `-accel kvm`). QEMU 10.0.2 có `mapped-ram`+`multifd` (ghi song song, O_DIRECT). Docker/Podman trong guest **không cần nested virt**. |
 | **B. CRIU checkpoint process trên host** (podman checkpoint / criu dump) | ⚠️ Chỉ hợp container headless | CRIU chính thức: process mở **device file** (GPU/DRM, input) hoặc nối **Xserver/compositor** = không dump được. Desktop + CrawBot Electron + chromium = không. |
 | **C. Custom kernel CONFIG_HIBERNATION trên host** | ❓ **Chưa ai verify**, không phải "bất khả" về lý thuyết | Kconfig arm64: `ARCH_HIBERNATION_POSSIBLE=y` đã bật trên host, chỉ thiếu `CONFIG_HIBERNATION`. Blocker thật = driver Pi (rp1, vc4, raspberrypi-firmware) **0 pm hook** → freeze/thaw không có gì để restore state. Rủi ro cao, đường dài. |
 
@@ -19,11 +19,18 @@ docker/podman không?
 guest** chỉ cần namespaces + cgroups + seccomp của kernel guest — y hệt như
 trên host. KVM lồng (KVM-trong-KVM) chỉ cần khi muốn chạy *VM* bên trong VM
 (Podman Machine, Docker Desktop, Waydroid-qua-VM…). Cortex-A76 = Armv8.2-A,
-**không có FEAT_NV/NV2** → kernel host báo `KVM_CAP_ARM_EL2 = 0`, không có
-dòng "Nested Virtualization Support" trong dmesg. → Không có nested KVM
-hardware, và **không cần**.
+FEAT_NV ra đời ở Armv8.3, NV2 ở Armv8.4 (Arm doc, đọc qua tổng hợp — chưa
+đọc trực tiếp TRM). Kernel rpi-6.12.y (`cpufeature.c`) chỉ bật
+`ARM64_HAS_NESTED_VIRT` khi `ID_AA64MMFR2_EL1.NV >= NV2` **và** boot với
+`kvm-arm.mode=nested`; máy này không có dòng "Nested Virtualization
+Support" trong dmesg. → Không có nested KVM hardware, và **không cần**.
 
 ## 1. Bằng chứng đã đọc (primary source)
+
+### 1.0 Trạng thái kiểm chứng
+Mới chứng minh: KVM khởi tạo được VM (paused, không disk). **Chưa** chạy
+guest, chưa chạy container trong guest, chưa save/restore lần nào. Mọi con
+số thời gian/điện ở dưới là ước tính, chờ prototype.
 
 ### 1.1 Máy này
 - `/sys/power/state` rỗng; `/proc/config.gz`: `CONFIG_SUSPEND`/`HIBERNATION`
@@ -33,7 +40,8 @@ hardware, và **không cần**.
 - dmesg: `kvm [1]: VHE mode initialized successfully`, IPA 40 bit.
   `qemu-system-aarch64 -M virt -accel kvm -cpu host` khởi tạo VM OK
   (mới test init, chưa test guest chạy + save/restore).
-- ioctl `KVM_CHECK_EXTENSION(KVM_CAP_ARM_EL2)` = 0 → không nested.
+- (Đã thử ioctl `KVM_CAP_ARM_EL2` nhưng hằng số đó **không tồn tại** trong
+  uapi rpi-6.12.y → kết quả vô nghĩa, bỏ. Bằng chứng nested = mục 1.2.)
 - QEMU 10.0.2 caps: `multifd, mapped-ram, background-snapshot, postcopy-ram,
   zero-copy-send…`; devices có: `virtio-gpu-pci`, `virtio-gpu-gl-pci`
   (venus=on/off, blob), `vhost-user-fs-pci`, `virtio-9p-pci`,
@@ -51,13 +59,15 @@ hardware, và **không cần**.
   tắt có chủ đích.
 - `arch/arm64/kernel/hibernate.c`: code arm64 generic có xử lý
   `el2_reset_needed()` (nVHE) & `__hyp_stub_vectors`; máy này chạy VHE.
-- Đếm pm hook (`suspend|resume`) trong driver Pi: `drivers/mfd/rp1.c` = 0,
-  `drivers/gpu/drm/vc4/vc4_drv.c` = 0, `drivers/firmware/raspberrypi.c` = 0;
-  `pcie-brcmstb.c` = 8, `sdhci-brcmstb.c` = 8, `xhci-pci.c` = 25.
-  → **RP1 (toàn bộ I/O: USB/Ethernet/GPIO/I2C/PWM quạt/DPI panel) và
-  VideoCore firmware mailbox không có freeze/thaw/restore** — hibernate
-  resume sẽ thức dậy với firmware đã re-init RP1/VC từ boot nhưng kernel
-  tin rằng state cũ còn → gần chắc chắn hỏng I/O sau resume.
+- Đếm pm hook (`dev_pm_ops|freeze|thaw|poweroff|restore|_suspend(|_resume(`)
+  trong driver Pi: `mfd/rp1.c`=0, `pinctrl-rp1.c`=0, `vc4_drv.c`=1,
+  `vc4_kms.c`=0, `vc4_hvs.c`=0, `firmware/raspberrypi.c`=0,
+  `bcm2835-mailbox.c`=0; ngược lại `pcie-brcmstb.c`=8, `sdhci-brcmstb.c`=8,
+  `xhci-pci.c`=25. Đây là **grep, chưa đọc từng driver** — hook có thể nằm
+  file khác. Kết luận thận trọng: **rủi ro device-state chưa được xử lý**
+  ở RP1 (USB/Ethernet/GPIO/I2C/PWM quạt/DPI) và VideoCore mailbox; sau
+  resume firmware đã re-init các khối này từ boot, kernel có thể giữ state
+  cũ → khả năng cao hỏng I/O, cần kernel dev thật để xác nhận.
 - `arch/arm64/kernel/cpufeature.c`: `ARM64_HAS_NESTED_VIRT` cần
   `ID_AA64MMFR2_EL1.NV >= NV2` và `kvm_get_mode()==KVM_MODE_NV`.
 - FINDINGS §5: PSCI `CPU_ON` fail -22 sau offline → hibernate resume cần
@@ -107,13 +117,15 @@ Chu trình "hibernate":
 1. QMP `stop` → `migrate_set_capability multifd on, mapped-ram on`,
    `direct-io on`, `migrate file:/var/vm/work.ram` (RAM guest N GB ghi
    song song vào NVMe ~440MB/s → 8GB ≈ 20-25s, 4GB ≈ 10s).
-2. Kill QEMU, `fastboot-save`/shutdown host → **0mA thật**.
+2. Kill QEMU sau khi migrate báo `completed` + `fsync` file, rồi shutdown
+   host → drain như fastboot (gần 0; PMIC/RTC vẫn ăn rất ít).
 3. Boot host (16s) → autostart QEMU `-incoming file:/var/vm/work.ram`
    (mapped-ram đọc ~370MB/s; có thể lazy-load bằng `MAP_PRIVATE`).
 4. Guest tiếp tục **đúng chỗ đang làm**: shell, tmux, chromium, docker
    containers đang chạy — không phải reconstruction.
 
-Tổng resume ≈ 16s boot + 10-25s restore ≈ **30-45s**, so với fastboot hiện
+Tổng resume ≈ 16s boot + 10-25s restore ≈ **30-45s (ước tính từ băng thông
+NVMe đo bằng dd, chưa đo save/restore thật)**, so với fastboot hiện
 tại (boot + relaunch app + pre-typed command, mất trạng thái trong RAM).
 
 Giới hạn phải chấp nhận / cần test:
@@ -138,8 +150,13 @@ Giới hạn phải chấp nhận / cần test:
   100-200GB cho docker.
 - **Bảo mật:** file RAM chứa toàn bộ bí mật trong RAM guest; NVMe không mã
   hoá → chmod 600 hoặc LUKS.
+- **Checkpoint invariants (bắt buộc):** (1) RAM file ↔ disk image là 1 cặp,
+  disk chỉ QEMU đó được mở; (2) shutdown host chỉ sau khi QMP báo
+  `completed` và file đã fsync; (3) machine type / device list / RAM size
+  pin cứng trong 1 file cấu hình, đổi = không restore được; (4) sau restore
+  chờ mạng lên rồi mới coi là "dậy".
 
-Điện: hibernate = tắt hẳn → 0mA (như fastboot). Đổi lại là mất GPU
+Điện: hibernate = tắt hẳn → drain như fastboot (chưa đo riêng). Đổi lại là mất GPU
 acceleration trong guest và overhead KVM ~5-10% CPU.
 
 ## 3. Hướng B — khi nào đáng dùng
