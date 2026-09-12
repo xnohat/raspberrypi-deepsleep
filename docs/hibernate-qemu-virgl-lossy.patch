@@ -1,0 +1,54 @@
+--- /dev/fd/58	2026-09-13 02:57:46.212389265 +0700
++++ hw/display/virtio-gpu-base.c	2026-09-13 01:07:29.655638163 +0700
+@@ -182,7 +182,8 @@
+         return false;
+     }
+ 
+-    if (virtio_gpu_virgl_enabled(g->conf)) {
++    if (virtio_gpu_virgl_enabled(g->conf) &&
++        !getenv("QEMU_GPU_ALLOW_MIGRATE")) {
+         error_setg(&g->migration_blocker, "virgl is not yet migratable");
+         if (migrate_add_blocker(&g->migration_blocker, errp) < 0) {
+             return false;
+--- /dev/fd/58	2026-09-13 02:57:54.100379319 +0700
++++ hw/display/virtio-gpu.c	2026-09-13 02:23:21.818147123 +0700
+@@ -1224,14 +1224,24 @@
+     VirtIOGPU *g = opaque;
+     struct virtio_gpu_simple_resource *res;
+     int i;
++    /* EXPERIMENTAL lossy virgl migration (HackberryPi hibernate): host GL
++     * state is dropped; only resources that have a host-side pixman copy
++     * are saved. Guest must restart its display server after restore. */
++    bool lossy = virtio_gpu_virgl_enabled(g->parent_obj.conf) &&
++                 getenv("QEMU_GPU_ALLOW_MIGRATE");
+ 
+     /* in 2d mode we should never find unprocessed commands here */
+-    assert(QTAILQ_EMPTY(&g->cmdq));
++    if (!lossy) {
++        assert(QTAILQ_EMPTY(&g->cmdq));
++    }
+ 
+     QTAILQ_FOREACH(res, &g->reslist, next) {
+         if (res->blob_size) {
+             continue;
+         }
++        if (lossy && !res->image) {
++            continue;
++        }
+         qemu_put_be32(f, res->resource_id);
+         qemu_put_be32(f, res->width);
+         qemu_put_be32(f, res->height);
+@@ -1432,6 +1442,13 @@
+ 
+         res = virtio_gpu_find_resource(g, scanout->resource_id);
+         if (!res) {
++            if (virtio_gpu_virgl_enabled(g->parent_obj.conf) &&
++                getenv("QEMU_GPU_ALLOW_MIGRATE")) {
++                /* lossy virgl migration: scanout resource was host GL state */
++                scanout->resource_id = 0;
++                scanout->cursor.resource_id = 0;
++                continue;
++            }
+             return -EINVAL;
+         }
+ 

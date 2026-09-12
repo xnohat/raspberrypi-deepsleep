@@ -337,3 +337,46 @@ Hai lựa chọn thực dụng:
 
 Binary patched ở `/home/pi/vmproto/build/qemu-10.0.2/b/` (không cài vào hệ
 thống); `hibernate-proto-vm.sh` hỗ trợ `QEMU_BIN`, `DISPLAY_MODE=gl`.
+
+## 8. Mức 1 "lossy virgl checkpoint" (2026-09-13 02:20–02:55) — PROOF-OF-CONCEPT ĐẠT
+
+Patch `docs/hibernate-qemu-virgl-lossy.patch` (QEMU 10.0.2, opt-in
+`QEMU_GPU_ALLOW_MIGRATE=1`): (a) bỏ migration blocker virgl; (b)
+`virtio_gpu_save` bỏ qua resource không có pixman image (= resource virgl);
+(c) `post_load` bỏ qua scanout trỏ tới resource không tồn tại. **GPU state
+KHÔNG được lưu** — chỉ RAM + virtio state. Đánh dấu: thí nghiệm, không an toàn
+cho dùng chung.
+
+### 8.1 Phát hiện về hiển thị (độc lập với migration)
+`-display gtk,gl=on` trên labwc/V3D host cho **cửa sổ đen** ngay cả boot mới
+với QEMU stock, với gl=es, với fbcon (không Xorg); `egl-headless` screendump
+"no surface". Guest X framebuffer lúc đó cũng chỉ 1 màu (glamor trên virgl
+vẽ vào texture host, không có pixel phía guest). `gl=off` hiển thị bình
+thường. → Đường trình chiếu GL của QEMU trên host này chưa chạy (GtkGLArea
+đòi GL ≥3.2, V3D desktop GL 3.1 — nghi vấn, chưa chứng minh). Kết luận
+"3D trong VM chạy" lúc 01:09 chỉ dựa trên `glxinfo` — chưa đủ; đã sửa.
+
+### 8.2 Cấu hình 2 GPU (chạy được, có hình)
+`-display gtk,gl=on -device virtio-gpu-pci,id=gpu2d` (scanout, gl=off path)
+`+ -device virtio-gpu-gl-pci,id=gpu0` (render node). Guest: card0 = 2D
+(Xorg modeset, llvmpipe), card1/renderD129 = virgl. Xorg GPU-1 glamor "on
+virgl (V3D)" nhưng DRI_PRIME/offload sink lỗi BadValue → GLX app vẫn
+llvmpipe. **App gọi EGL thẳng vào `/dev/dri/renderD129` (GBM/surfaceless)
+được `virgl (V3D 7.1.10.2)`** — tức accel có cho app biết chọn render node
+(kmscube/EGL/chromium `--render-node`...), không tự động cho mọi GLX app.
+Màn hình host hiển thị đúng (1223 màu).
+
+### 8.3 Save/restore với cấu hình 2 GPU + patch (test `docs/hibernate-proto-gl2-test.sh`)
+| | |
+|---|---|
+| Save | 7.1s, file 946MB (guest 4GB) |
+| Restore | 3.3s |
+| Continuity | uptime 25→34s, counter 3→12→29, tick liên tục, Xorg giữ nguyên PID, **màn hình host có hình ngay** (1224 màu), mở terminal mới vẽ được |
+| GL sau restore, **không** restart Xorg | EGL app mới trên renderD129: `GL_RENDERER=virgl (V3D)`, `glGetError=1286` (INVALID_FRAMEBUFFER_OPERATION — context/resource cũ trong virglrenderer đã mất) |
+| GL sau `systemctl restart lightdm` (test §8 lần 1, cấu hình 1 GPU) | glxinfo virgl OK, glmark2 = 667 |
+
+Kết luận mức 1: **process/container/desktop 2D sống qua checkpoint; GPU
+accel dùng lại được sau khi khởi động lại client GL** (app đang giữ context
+GL cũ sẽ lỗi — cần restart app đó hoặc display server). Chưa test: tắt
+nguồn host thật; app GL thật (chromium/waydroid) qua chu trình này; độ ổn
+định lặp nhiều lần; guest kernel có rò resource id cũ không.

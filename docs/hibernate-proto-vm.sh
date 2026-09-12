@@ -17,8 +17,8 @@ qemu_cmd() {
     none) disp="-display none" ;;
     gtk)  disp="-display gtk,gl=off -device virtio-gpu-pci -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
     sdl)  disp="-display sdl,gl=off -device virtio-gpu-pci -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
-    gl)   disp="-display gtk,gl=on -device pcie-root-port,id=rp0,slot=9 $( [ -z "$extra_nogpu" ] && echo -device virtio-gpu-gl-pci,id=gpu0,bus=rp0 ) -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
-    gl2)  disp="-display gtk,gl=on -device virtio-gpu-pci,id=gpu2d -device pcie-root-port,id=rp0,slot=9 $( [ -z "$extra_nogpu" ] && echo -device virtio-gpu-gl-pci,id=gpu0,bus=rp0 ) -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
+    gl)   disp="-display ${GLDISP:-gtk,gl=on} -device pcie-root-port,id=rp0,slot=9 $( [ -z "$extra_nogpu" ] && echo -device virtio-gpu-gl-pci,id=gpu0,bus=rp0 ) -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
+    gl2)  disp="-display gtk,gl=on -device virtio-gpu-pci,id=gpu2d -device pcie-root-port,id=rp0,slot=9 -device virtio-gpu-gl-pci,id=gpu0,bus=rp0 -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
   esac
   echo ${QEMU_BIN:-qemu-system-aarch64} -name vmwork -M virt,gic-version=host -accel kvm -cpu host \
     -smp "$CPUS" -m "$RAM" \
@@ -68,7 +68,8 @@ set_caps() {
 }
 wait_migrate() {
   while :; do
-    st=$(qmp query-migrate | python3 -c "import sys,json; r=json.load(sys.stdin)['return']; print(r.get('status'), r.get('error-desc',''))")
+    st=$(qmp query-migrate 2>/dev/null | python3 -c "import sys,json; r=json.load(sys.stdin)['return']; print(r.get('status'), r.get('error-desc',''))" 2>/dev/null)
+    [ -n "$st" ] || { echo "QEMU DIED during migration:"; grep -vE "Gdk|^$" "$D/qemu.err" | tail -3; return 1; }
     case "$st" in completed*) return 0;; failed*) echo "MIGRATE FAILED: $st"; return 1;; esac
     sleep 0.2
   done
@@ -80,13 +81,12 @@ start)
     qemu-img create -q -f qcow2 -b "$BASE" -F qcow2 "$DISK" 30G
     cp /usr/share/AAVMF/AAVMF_VARS.fd "$D/vars.fd"
   fi
-  launch "" && echo "started pid $(cat "$PID")"
+  launch "" && echo "started pid $(cat "$PID")" && printf "RAM=%s\nCPUS=%s\nDISPLAY_MODE=%s\nNOGPU=%s\n" "$RAM" "$CPUS" "$DISPLAY_MODE" "${NOGPU:-0}" > "$D/vm.conf"
   ;;
 gpu-del)  qmp device_del '{"id":"gpu0"}'; sleep 2; qmp query-pci | grep -c gpu0 ;;
 gpu-add)  qmp device_add '{"driver":"virtio-gpu-gl-pci","id":"gpu0","bus":"rp0"}' ;;
 save)
   t0=$(date +%s.%N)
-  printf 'RAM=%s\nCPUS=%s\nDISPLAY_MODE=%s\nNOGPU=%s\n' "$RAM" "$CPUS" "$DISPLAY_MODE" "$( qmp query-pci | grep -q '"gpu0"' && echo "" || echo 1 )" > "$D/vm.conf"
   qmp stop >/dev/null; set_caps; rm -f "$RAMF"
   r=$(qmp migrate "{\"uri\":\"file:$RAMF\"}"); echo "$r" | grep -q '"error"' && { echo "MIGRATE REFUSED: $r"; qmp cont >/dev/null; exit 1; }
   wait_migrate || { qmp cont >/dev/null; exit 1; }
@@ -97,7 +97,7 @@ save)
 restore)
   t0=$(date +%s.%N)
   [ -f "$D/vm.conf" ] && . "$D/vm.conf"   # machine config pinned at save time
-  launch "-incoming defer" "${NOGPU:-}" || exit 1
+  launch "-incoming defer" "$([ "${NOGPU:-0}" = 1 ] && echo 1)" || exit 1
   set_caps
   qmp migrate-incoming "{\"uri\":\"file:$RAMF\"}" >/dev/null
   wait_migrate || exit 1
