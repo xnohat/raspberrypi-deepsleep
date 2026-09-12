@@ -20,7 +20,7 @@ qemu_cmd() {
     gl)   disp="-display gtk,gl=on -device pcie-root-port,id=rp0,slot=9 $( [ -z "$extra_nogpu" ] && echo -device virtio-gpu-gl-pci,id=gpu0,bus=rp0 ) -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
     gl2)  disp="-display gtk,gl=on -device virtio-gpu-pci,id=gpu2d -device pcie-root-port,id=rp0,slot=9 $( [ -z "$extra_nogpu" ] && echo -device virtio-gpu-gl-pci,id=gpu0,bus=rp0 ) -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
   esac
-  echo qemu-system-aarch64 -name vmwork -M virt,gic-version=host -accel kvm -cpu host \
+  echo ${QEMU_BIN:-qemu-system-aarch64} -name vmwork -M virt,gic-version=host -accel kvm -cpu host \
     -smp "$CPUS" -m "$RAM" \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/AAVMF/AAVMF_CODE.fd \
     -drive if=pflash,format=raw,file=$D/vars.fd \

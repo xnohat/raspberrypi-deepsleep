@@ -298,3 +298,42 @@ snapshot: blocker là code QEMU, không phải giới hạn phần cứng; khôn
 Ghi chú vận hành: `-daemonize` + `-display gtk` không tương thích; QEMU cho
 gtk cần `XDG_RUNTIME_DIR`/`WAYLAND_DISPLAY` của user pi; `vm.conf` giờ được
 ghi cạnh snapshot và `restore` đọc từ đó (RAM/CPUS/DISPLAY_MODE/NOGPU).
+
+### 7.1 Patch QEMU bỏ blocker — TEST THẬT: SEGFAULT (01:16–01:55)
+
+Build QEMU 10.0.2 từ source (`--enable-virglrenderer --enable-opengl
+--enable-gtk --enable-kvm`, ~50 phút trên 4 core A76, SoC lên 76°C) với patch
+`docs/hibernate-qemu-virgl-unblock.patch` (bỏ `migrate_add_blocker` khi env
+`QEMU_GPU_ALLOW_MIGRATE=1`, opt-in).
+
+Kết quả: guest virgl (renderer `virgl (V3D 7.1.10.2)`) → QMP `stop` →
+`migrate file:` với mapped-ram → status `active` ~5s → **QEMU segfault
+(exit 139)**, file RAM dở dang 4.4GB.
+
+Nguyên nhân (đọc source, không đoán): `hw/display/virtio-gpu.c
+virtio_gpu_save()` duyệt `g->reslist` và ghi
+`pixman_image_get_data(res->image)` cho mọi resource không-blob. Resource
+do virgl tạo (`virtio-gpu-virgl.c virgl_cmd_create_resource_2d` →
+`virgl_renderer_resource_create`) **không có `res->image`** — pixel nằm
+trong GL texture của host (V3D), QEMU không giữ bản copy → NULL deref.
+Tức blocker "virgl is not yet migratable" không phải cờ hành chính; nó
+chặn đúng chỗ code save không biết serialize GPU resource.
+
+Để đi tiếp phải viết thật: (1) đọc ngược mọi resource từ virglrenderer về
+RAM lúc save (`virgl_renderer_transfer_read_iov` cho từng resource + GL
+context/shader/fence state — virglrenderer **không có API** export toàn bộ
+context), (2) tái tạo lúc load. Đây là feature upstream chưa có ai làm
+(crosvm mới có snapshot resource sơ khai, không có context). Ngoài tầm
+prototype 1 đêm.
+
+**Verdict hybrid:** ❌ với QEMU/virglrenderer hiện tại. 3D-trong-VM (virgl
+V3D) ✅ chạy tốt, nhưng **không thể** snapshot VM khi GPU-gl đang gắn, và
+không rút GPU ra được (hotpluggable=false). Hai lựa chọn còn lại:
+- **2D + hibernate** (đã PASS §6) — GUI trong guest render CPU, app cần GPU
+  chạy ở host.
+- **3D không hibernate** — guest virgl, tắt bằng fastboot-style
+  reconstruction như hiện tại.
+
+Binary patched giữ ở `/home/pi/vmproto/build/qemu-10.0.2/b/` (không cài
+vào hệ thống), script test `hibernate-proto-vm.sh` hỗ trợ `QEMU_BIN`,
+`DISPLAY_MODE=gl`.
