@@ -265,3 +265,36 @@ với snapshot), không chỉ vì `-daemonize`. Bài học: cấu hình máy ph�
    userspace Pi OS; boot KVM; verify docker + AICoworker trong guest.
 3. vm.sh v2: config file cạnh snapshot, fail-fast QMP, PID chính xác.
 4. Test host power-cycle thật (save → shutdown → boot → restore).
+
+## 7. Hybrid "3D trong VM + hibernate" (2026-09-13 00:40–00:50) — CHƯA làm được
+
+Mục tiêu: có GL/Vulkan trong guest khi làm việc, rút GPU trước khi save,
+cắm lại sau restore.
+
+| Bước | Kết quả | Bằng chứng |
+|---|---|---|
+| virgl trên V3D host (`-display gtk,gl=on -device virtio-gpu-gl-pci`) | ✅ **Chạy** | guest `glxinfo`: `OpenGL renderer string: virgl (V3D 7.1.10.2)`, `Accelerated: yes`, Mesa 22.3.6 GL 3.1; dmesg guest `features: +virgl +edid`; glmark2 chạy trong XFCE |
+| Save khi GPU-gl còn gắn | ❌ | QMP: `{"error": {"desc": "virgl is not yet migratable"}}` |
+| Hot-unplug GPU (`device_del gpu0`, gắn trên pcie-root-port) | ❌ | QMP: `Device 'virtio-gpu-gl-pci' does not support hotplugging` — `hw/display/virtio-gpu-pci.c:68 dc->hotpluggable = false` |
+| vhost-user-gpu (GPU render trong process **ngoài** QEMU, `/usr/lib/qemu/vhost-user-gpu --virgl -r renderD128`, memfd share) | GL ✅ (cùng renderer virgl V3D) nhưng save ❌ | vẫn `virgl is not yet migratable` — blocker gắn ở `virtio-gpu-base.c:186` trong realize, dùng chung cho mọi biến thể virgl |
+
+**Kết luận:** với QEMU 10.0.2 stock, **không có tổ hợp nào** cho cả 3D lẫn
+snapshot: blocker là code QEMU, không phải giới hạn phần cứng; không hotplug
+được; đổi sang vhost-user-gpu không thoát.
+
+Đường còn lại (chưa thử, cần anh duyệt vì phải build QEMU):
+- **Patch QEMU 1 dòng** (bỏ `migrate_add_blocker` khi dùng vhost-user-gpu)
+  + rebuild từ source Debian. Save sẽ thành công (QEMU chỉ giữ virtio
+  state; GPU state nằm trong process vhost-user-gpu bị mất). Sau restore,
+  process vhost-user-gpu mới trắng trơn → guest driver `virtio_gpu` tưởng
+  resource cũ còn → màn hình rác/Xorg treo cho tới khi **restart Xorg**
+  (mất cửa sổ GUI, nhưng shell/tmux/docker/AICoworker gateway sống). Đây là
+  cách "hibernate mất GUI, giữ process" — có thể chấp nhận nếu GUI trong
+  guest chỉ là terminal + chromium (chromium có session restore riêng).
+  Rủi ro: guest kernel driver có thể panic khi resource biến mất; cần test.
+- Chờ upstream: QEMU/virglrenderer chưa có kế hoạch serialize GPU state
+  (crosvm có snapshot sơ khai, không dùng được với QEMU).
+
+Ghi chú vận hành: `-daemonize` + `-display gtk` không tương thích; QEMU cho
+gtk cần `XDG_RUNTIME_DIR`/`WAYLAND_DISPLAY` của user pi; `vm.conf` giờ được
+ghi cạnh snapshot và `restore` đọc từ đó (RAM/CPUS/DISPLAY_MODE/NOGPU).

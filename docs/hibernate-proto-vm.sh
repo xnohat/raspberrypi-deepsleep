@@ -12,11 +12,13 @@ SSH="ssh -q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o Conne
 
 # ONE place that builds the machine — restore must be identical to start.
 qemu_cmd() {
-  local extra="$1" disp
+  local extra="$1" disp extra_nogpu="${2:-}"
   case "$DISPLAY_MODE" in
     none) disp="-display none" ;;
     gtk)  disp="-display gtk,gl=off -device virtio-gpu-pci -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
     sdl)  disp="-display sdl,gl=off -device virtio-gpu-pci -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
+    gl)   disp="-display gtk,gl=on -device pcie-root-port,id=rp0,slot=9 $( [ -z "$extra_nogpu" ] && echo -device virtio-gpu-gl-pci,id=gpu0,bus=rp0 ) -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
+    gl2)  disp="-display gtk,gl=on -device virtio-gpu-pci,id=gpu2d -device pcie-root-port,id=rp0,slot=9 $( [ -z "$extra_nogpu" ] && echo -device virtio-gpu-gl-pci,id=gpu0,bus=rp0 ) -device virtio-keyboard-pci -device virtio-tablet-pci" ;;
   esac
   echo qemu-system-aarch64 -name vmwork -M virt,gic-version=host -accel kvm -cpu host \
     -smp "$CPUS" -m "$RAM" \
@@ -36,7 +38,7 @@ qemu_cmd() {
 # background qemu (no -daemonize: it breaks gtk display + -incoming), wait for QMP
 launch() {
   rm -f "$QMP" "$PID"
-  setsid bash -c "exec $(qemu_cmd "$1")" > "$D/qemu.err" 2>&1 < /dev/null &
+  setsid bash -c "exec $(qemu_cmd "$1" "${2:-}")" > "$D/qemu.err" 2>&1 < /dev/null &
   for i in $(seq 1 100); do [ -S "$QMP" ] && return 0; sleep 0.2; done
   echo "qemu failed:"; cat "$D/qemu.err"; return 1
 }
@@ -80,18 +82,22 @@ start)
   fi
   launch "" && echo "started pid $(cat "$PID")"
   ;;
+gpu-del)  qmp device_del '{"id":"gpu0"}'; sleep 2; qmp query-pci | grep -c gpu0 ;;
+gpu-add)  qmp device_add '{"driver":"virtio-gpu-gl-pci","id":"gpu0","bus":"rp0"}' ;;
 save)
   t0=$(date +%s.%N)
+  printf 'RAM=%s\nCPUS=%s\nDISPLAY_MODE=%s\nNOGPU=%s\n' "$RAM" "$CPUS" "$DISPLAY_MODE" "$( qmp query-pci | grep -q '"gpu0"' && echo "" || echo 1 )" > "$D/vm.conf"
   qmp stop >/dev/null; set_caps; rm -f "$RAMF"
-  qmp migrate "{\"uri\":\"file:$RAMF\"}" >/dev/null
-  wait_migrate || exit 1
+  r=$(qmp migrate "{\"uri\":\"file:$RAMF\"}"); echo "$r" | grep -q '"error"' && { echo "MIGRATE REFUSED: $r"; qmp cont >/dev/null; exit 1; }
+  wait_migrate || { qmp cont >/dev/null; exit 1; }
   t1=$(date +%s.%N); sync "$RAMF"
   qmp quit >/dev/null 2>&1; sleep 1
   printf "SAVE ok: %.1fs, file %s (%s)\n" "$(echo "$t1-$t0"|bc)" "$RAMF" "$(du -h "$RAMF" | cut -f1)"
   ;;
 restore)
   t0=$(date +%s.%N)
-  launch "-incoming defer" || exit 1
+  [ -f "$D/vm.conf" ] && . "$D/vm.conf"   # machine config pinned at save time
+  launch "-incoming defer" "${NOGPU:-}" || exit 1
   set_caps
   qmp migrate-incoming "{\"uri\":\"file:$RAMF\"}" >/dev/null
   wait_migrate || exit 1
@@ -103,5 +109,5 @@ status) qmp query-status; qmp query-kvm ;;
 ssh) shift; $SSH "$@" ;;
 stop) qmp quit ;;
 clean) qmp quit 2>/dev/null; sleep 1; rm -f "$DISK" "$RAMF" "$QMP" "$PID" "$SER"; echo cleaned ;;
-*) echo "usage: $0 start [fresh]|save|restore|status|ssh <cmd>|stop|clean"; exit 1 ;;
+*) echo "usage: $0 start [fresh]|save|restore|gpu-del|gpu-add|status|ssh <cmd>|stop|clean"; exit 1 ;;
 esac
