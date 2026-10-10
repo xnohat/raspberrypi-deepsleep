@@ -132,6 +132,10 @@ class App(tk.Tk):
         self._build_power()
         self._build_cfg()
 
+        if "--tab" in sys.argv:
+            names = {"status": 0, "fan": 1, "cool": 2, "power": 3, "settings": 4}
+            i = names.get(sys.argv[sys.argv.index("--tab") + 1:][:1][0] if sys.argv[-1] != "--tab" else "", 0)
+            nb.select(i)
         self._tick()
         nb.bind("<<NotebookTabChanged>>", self._on_tab)
 

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Pi Cooler
+Comment=Cooling profile, CPU cap, fan and hottest processes
+Exec=python3 /usr/local/bin/pipower-gui.py --tab cool
+Icon=pi-cooler
+Type=Application
+Terminal=false
+Categories=Utility;System;
+Keywords=cool;fan;temperature;thermal;

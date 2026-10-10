@@ -155,6 +155,10 @@ install -m 644 "$SCRIPT_DIR/pi-cooler.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable pi-cooler.service
 systemctl restart pi-cooler.service
+install -Dm 644 "$SCRIPT_DIR/ui/pi-cooler.svg" /usr/share/icons/hicolor/scalable/apps/pi-cooler.svg
+gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
+install -m 644 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/ui/picooler.desktop" "$TARGET_HOME/.local/share/applications/picooler.desktop"
+as_user update-desktop-database "$TARGET_HOME/.local/share/applications" 2>/dev/null || true
 
 # ── 7. Log file ──────────────────────────────────────────────────
 echo "[7/8] Log file..."

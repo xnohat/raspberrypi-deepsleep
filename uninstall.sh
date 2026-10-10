@@ -59,3 +59,4 @@ for c in /sys/devices/system/cpu/cpu*/cpufreq; do
     echo ondemand > "$c/scaling_governor" 2>/dev/null
     cat "$c/cpuinfo_max_freq" > "$c/scaling_max_freq" 2>/dev/null
 done
+rm -f /usr/share/icons/hicolor/scalable/apps/pi-cooler.svg "$(getent passwd ${SUDO_USER:-pi} | cut -d: -f6)/.local/share/applications/picooler.desktop"
