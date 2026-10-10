@@ -43,8 +43,22 @@ PROFILES = {
     "silent":   {"base": 1800000, "steps": [(55000, 1600000), (60000, 1500000)],
                  "fan_shift": 3000},
 }
-# kernel fan trip points from config.txt (state n reached at FAN_TRIPS[n-1])
+# kernel fan trip points / speeds from config.txt (state n reached at FAN_TRIPS[n-1])
 FAN_TRIPS = [55000, 65000, 72000, 78000]
+FAN_SPEEDS = [0, 115, 145, 190, 255]
+
+
+def load_fan_curve():
+    """read fan_tempN / fan_tempN_speed from config.txt so seeding matches the GUI curve."""
+    import re
+    txt = rd("/boot/firmware/config.txt")
+    for i in range(4):
+        t = re.search(rf"^dtparam=fan_temp{i}=(\d+)", txt, re.M)
+        sp = re.search(rf"^dtparam=fan_temp{i}_speed=(\d+)", txt, re.M)
+        if t:
+            FAN_TRIPS[i] = int(t.group(1))
+        if sp:
+            FAN_SPEEDS[i + 1] = int(sp.group(1))
 
 
 def rd(p, d=""):
@@ -98,6 +112,7 @@ def main():
     hw_max = int(rd(f"{pols[0]}/cpuinfo_max_freq", "2400000"))
     hw_min = int(rd(f"{pols[0]}/cpuinfo_min_freq", "1500000"))
     fh = fan_hwmon()
+    load_fan_curve()
     level = 0          # current step index (0 = base)
     last = (None, None)
     was_sleeping = False
@@ -133,7 +148,12 @@ def main():
                 wr(f"{p}/scaling_max_freq", cap)
 
             fan_state = "-"
-            if fh and rd(f"{fh}/pwm1_enable") == "2":
+            # pwm-fan: thermal framework drives pwm via cur_state. A manual
+            # override (GUI fan-manual / fan-test) shows up as pwm != curve speed
+            # for the current state -> leave it alone.
+            cur = int(rd(COOL_DEV, "0") or 0)
+            pwm = int(rd(f"{fh}/pwm1", "-1") or -1) if fh else -1
+            if fh and 0 <= cur < len(FAN_SPEEDS) and pwm == FAN_SPEEDS[cur]:
                 trips = [x + cfg["fan_shift"] for x in FAN_TRIPS]
                 want = sum(1 for x in trips if t >= x)
                 cur = int(rd(COOL_DEV, "0") or 0)
