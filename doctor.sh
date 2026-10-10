@@ -46,6 +46,10 @@ echo "── pi power gui ──"
 systemctl is-active battery-logger >/dev/null 2>&1 && ok "battery-logger active" || bad "battery-logger NOT active"
 python3 -c "import tkinter" 2>/dev/null && ok "python3-tk" || bad "python3-tk missing"
 
+echo "── pi cooler ──"
+[ -x /usr/local/bin/pi-cooler.py ] && ok "pi-cooler.py" || bad "pi-cooler.py missing"
+systemctl is-active pi-cooler >/dev/null 2>&1 && ok "pi-cooler active ($(grep -o 'profile=[a-z]*' /run/pi-cooler.status 2>/dev/null))" || bad "pi-cooler NOT active"
+
 echo "── fastboot hooks ──"
 grep -q "fastboot-restore" "$TARGET_HOME/.config/labwc/autostart" 2>/dev/null \
     && ok "labwc autostart hook" || bad "labwc autostart hook missing"

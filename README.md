@@ -67,6 +67,17 @@ runtime estimates (fed by the always-on battery-logger service);
 **settings** — wifi/fan/watchdog/button-hold, applied live. Privileged
 writes go through a narrow validated sudo helper with config backups.
 
+### 4b. Pi Cooler (always-on cooling daemon)
+`pi-cooler.service` keeps the SoC cool under light desktop load (AI gateway +
+chromium used to idle at 62-70°C):
+- `schedutil` governor instead of `ondemand` (no pointless 2.4GHz spikes)
+- temperature-stepped CPU cap with hysteresis
+- re-seeds the pwm-fan cooling state every 3s, so the fan never gets stuck
+  between trip points (only in auto mode — manual fan is respected)
+- profiles: **balanced** (default) · **cool** · **silent** · **off**, switchable
+  from the ❄️ Cool tab in Pi Power (`/etc/pi-cooler.conf`)
+- pauses itself during deep sleep
+
 ### 5. Power button daemon
 evdev-based (`pwr_button` device, exclusive grab — replaces acpid/logind
 handling):

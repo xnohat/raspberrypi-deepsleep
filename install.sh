@@ -147,6 +147,15 @@ systemctl enable --now battery-logger.service 2>/dev/null || true
 install -m 644 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/ui/pipower.desktop" "$TARGET_HOME/.local/share/applications/pipower.desktop"
 as_user update-desktop-database "$TARGET_HOME/.local/share/applications" 2>/dev/null || true
 
+# ── 6c. Pi Cooler (temperature-aware CPU cap + fan re-seed) ───
+echo "[6c/8] Pi Cooler..."
+install -m 755 "$SCRIPT_DIR/pi-cooler.py" /usr/local/bin/
+[ -f /etc/pi-cooler.conf ] || echo "PROFILE=balanced" > /etc/pi-cooler.conf
+install -m 644 "$SCRIPT_DIR/pi-cooler.service" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable pi-cooler.service
+systemctl restart pi-cooler.service
+
 # ── 7. Log file ──────────────────────────────────────────────────
 echo "[7/8] Log file..."
 touch /var/log/pi-deepsleep.log

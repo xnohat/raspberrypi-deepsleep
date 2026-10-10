@@ -1,0 +1,13 @@
+[Unit]
+Description=Pi Cooler — temperature-aware CPU cap + fan re-seed
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/pi-cooler.py
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

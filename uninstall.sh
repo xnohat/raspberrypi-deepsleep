@@ -50,3 +50,12 @@ rm -rf "$TARGET_HOME/.fastboot-state" "$TARGET_HOME/.fastboot-state.previous" "$
 
 echo "=== Done. Reboot recommended. ==="
 echo "(foot/tmux packages and ~/.tmux.conf, foot.ini kept — remove manually if unwanted)"
+
+# Pi Cooler: stop + restore stock cpufreq
+systemctl disable --now pi-cooler.service 2>/dev/null || true
+rm -f /etc/systemd/system/pi-cooler.service /usr/local/bin/pi-cooler.py /etc/pi-cooler.conf /run/pi-cooler.status
+systemctl daemon-reload
+for c in /sys/devices/system/cpu/cpu*/cpufreq; do
+    echo ondemand > "$c/scaling_governor" 2>/dev/null
+    cat "$c/cpuinfo_max_freq" > "$c/scaling_max_freq" 2>/dev/null
+done

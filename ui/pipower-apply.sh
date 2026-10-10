@@ -88,6 +88,13 @@ fan-save)
     log "fan-save curve updated (reboot needed)"
     echo "saved (reboot needed)"
     ;;
+cooler-profile)
+    # cooler-profile balanced|cool|silent|off (daemon picks it up within 3s)
+    case "$2" in balanced|cool|silent|off) ;; *) echo "bad profile"; exit 1 ;; esac
+    echo "PROFILE=$2" > /etc/pi-cooler.conf
+    log "cooler-profile $2"
+    echo "profile=$2"
+    ;;
 config-set)
     # config-set KEY VALUE [KEY VALUE...]
     shift
@@ -119,5 +126,5 @@ action)
     esac
     ;;
 *)
-    echo "usage: fan-test|fan-manual|fan-auto|fan-save|config-set|action"; exit 1 ;;
+    echo "usage: fan-test|fan-manual|fan-auto|fan-save|cooler-profile|config-set|action"; exit 1 ;;
 esac

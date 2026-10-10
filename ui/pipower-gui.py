@@ -117,15 +117,18 @@ class App(tk.Tk):
         self.tab_status = ttk.Frame(nb)
         self.tab_fan = ttk.Frame(nb)
         self.tab_power = ttk.Frame(nb)
+        self.tab_cool = ttk.Frame(nb)
         self.tab_cfg = ttk.Frame(nb)
         nb.add(self.tab_status, text=" 📊 Status ")
         nb.add(self.tab_fan, text=" 🌀 Fan ")
+        nb.add(self.tab_cool, text=" ❄️ Cool ")
         nb.add(self.tab_power, text=" 🔋 Power ")
         nb.add(self.tab_cfg, text=" ⚙️ Settings ")
         self.nb = nb
 
         self._build_status()
         self._build_fan()
+        self._build_cool()
         self._build_power()
         self._build_cfg()
 
@@ -215,7 +218,8 @@ class App(tk.Tk):
         except Exception:
             self.lbl_ucfg.configure(text="")
         self.lbl_misc.configure(text=f"{time.strftime('%H:%M:%S')}")
-        self.after(2000, self._tick)
+        if self.nb.index("current") == 2:
+            self._cool_refresh()
 
     # ── Fan ──────────────────────────────────────────────────────
     def _build_fan(self):
@@ -591,6 +595,61 @@ class App(tk.Tk):
                                  f"charging +{-ma:.0f} mA")
         self.lbl_drain.configure(text="\n".join(parts) or "Not enough drain data")
 
+
+    # ── Cooling ───────────────────────────────────────────────────
+    COOL_PROFILES = (
+        ("balanced", "⚖️ Balanced", "Full speed while cool, lowers CPU cap above 65°C"),
+        ("cool", "❄️ Cool", "Cap 2.0GHz, steeper steps, fan starts ~48°C"),
+        ("silent", "🤫 Silent", "Cap 1.8GHz → keep the fan quiet as long as possible"),
+        ("off", "⛔ Off", "Stock behaviour (ondemand, 2.4GHz, no fan re-seed)"),
+    )
+
+    def _build_cool(self):
+        f = self.tab_cool
+        self.cool_var = tk.StringVar(value="balanced")
+        ttk.Label(f, text="Cooling profile", style="Big.TLabel").pack(anchor="w", padx=16, pady=(14, 6))
+        for val, name, desc in self.COOL_PROFILES:
+            r = ttk.Frame(f)
+            r.pack(fill="x", padx=20, pady=3)
+            ttk.Radiobutton(r, text=name, value=val, variable=self.cool_var,
+                            command=self._cool_set).pack(side="left")
+            ttk.Label(r, text=desc, foreground=DIM, wraplength=380).pack(side="left", padx=10)
+        self.lbl_cool = ttk.Label(f, font=("Sans", 12, "bold"), justify="left")
+        self.lbl_cool.pack(anchor="w", padx=16, pady=(14, 4))
+        ttk.Label(f, text="Hottest processes (CPU %)", style="Big.TLabel").pack(anchor="w", padx=16, pady=(10, 4))
+        self.lbl_hot = ttk.Label(f, font=("Monospace", 10), justify="left")
+        self.lbl_hot.pack(anchor="w", padx=16)
+        m = re.search(r"^PROFILE=(\w+)", read("/etc/pi-cooler.conf"), re.M)
+        if m:
+            self.cool_var.set(m.group(1))
+
+    def _cool_set(self):
+        ok, out = apply_cmd("cooler-profile", self.cool_var.get())
+        if not ok:
+            messagebox.showerror("Pi Power", out or "lỗi", parent=self)
+        self.after(3500, self._cool_refresh)
+
+    def _cool_refresh(self):
+        st = dict(kv.split("=", 1) for kv in read("/run/pi-cooler.status").split() if "=" in kv)
+        if not st:
+            self.lbl_cool.configure(text="pi-cooler service not running", foreground=BAD)
+        else:
+            t = int(st.get("temp", "0")) / 1000
+            cap = st.get("cap")
+            txt = f"🌡 {t:.1f}°C   profile: {st.get('profile')}"
+            if st.get("state") == "deepsleep":
+                txt += "\n💤 deep sleep active — cooler paused"
+            elif cap:
+                txt += (f"\n⚡ CPU cap {int(cap)//1000} MHz (step {st.get('level')})"
+                        f"   🌀 fan state {st.get('fan_state')} · {st.get('rpm')} rpm")
+            self.lbl_cool.configure(text=txt, foreground=GOOD if t < 60 else (WARN if t < 72 else BAD))
+        try:
+            out = subprocess.run(["ps", "-eo", "pcpu,comm", "--sort=-pcpu"],
+                                 capture_output=True, text=True, timeout=3).stdout
+            self.lbl_hot.configure(text="\n".join(l[:44] for l in out.splitlines()[1:7]))
+        except Exception:
+            pass
+
     # ── Settings ──────────────────────────────────────────────────
     def _build_cfg(self):
         f = self.tab_cfg
@@ -668,7 +727,10 @@ class App(tk.Tk):
                                    foreground=GOOD if ok else BAD)
 
     def _on_tab(self, _):
-        if self.nb.index("current") == 2:
+        i = self.nb.index("current")
+        if i == 2:
+            self.after(50, self._cool_refresh)
+        elif i == 3:
             self.after(50, self._power_refresh)
 
 
