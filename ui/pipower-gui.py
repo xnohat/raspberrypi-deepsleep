@@ -647,12 +647,36 @@ class App(tk.Tk):
                 txt += (f"\n⚡ CPU cap {int(cap)//1000} MHz (step {st.get('level')})"
                         f"   🌀 fan state {st.get('fan_state')} · {st.get('rpm')} rpm")
             self.lbl_cool.configure(text=txt, foreground=GOOD if t < 60 else (WARN if t < 72 else BAD))
-        try:
-            out = subprocess.run(["ps", "-eo", "pcpu,comm", "--sort=-pcpu"],
-                                 capture_output=True, text=True, timeout=3).stdout
-            self.lbl_hot.configure(text="\n".join(l[:44] for l in out.splitlines()[1:7]))
-        except Exception:
-            pass
+        self.lbl_hot.configure(text=self._hot_procs())
+
+    def _hot_procs(self):
+        """Live CPU% per process from /proc deltas between refreshes
+        (ps %CPU is a lifetime average and lags badly)."""
+        now = {}
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            st = read(f"/proc/{pid}/stat")
+            if not st:
+                continue
+            r = st.rfind(")")
+            f = st[r + 2:].split()
+            now[pid] = (int(f[11]) + int(f[12]), st[st.find("(") + 1:r])
+        t = time.monotonic()
+        prev, pt = getattr(self, "_hot_prev", ({}, t))
+        self._hot_prev = (now, t)
+        dt = t - pt
+        if dt < 0.5:
+            return "measuring…"
+        hz = os.sysconf("SC_CLK_TCK")
+        rows = []
+        for pid, (ticks, name) in now.items():
+            if pid in prev:
+                pct = (ticks - prev[pid][0]) / hz / dt * 100
+                if pct >= 0.5:
+                    rows.append((pct, name, pid))
+        rows.sort(reverse=True)
+        return "\n".join(f"{p:6.1f}%  {n[:24]:<24} {pid}" for p, n, pid in rows[:6]) or "idle"
 
     # ── Settings ──────────────────────────────────────────────────
     def _build_cfg(self):
