@@ -5,5 +5,5 @@ Exec=python3 /usr/local/bin/pipower-gui.py --tab cool
 Icon=pi-cooler
 Type=Application
 Terminal=false
-Categories=Utility;System;
+Categories=System;Monitor;
 Keywords=cool;fan;temperature;thermal;
