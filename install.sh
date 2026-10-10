@@ -103,6 +103,7 @@ install -m 644 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/terminal/tmux.co
 install -m 755 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/terminal/tmux-status.sh" "$TARGET_HOME/.tmux-status.sh"
 install -m 755 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/terminal/piterm-attach"  "$TARGET_HOME/.local/bin/piterm-attach"
 install -m 644 -o "$TARGET_USER" -g "$TARGET_USER" "$SCRIPT_DIR/terminal/piterm.desktop" "$TARGET_HOME/.local/share/applications/piterm.desktop"
+sed -i "s|@HOME@|$TARGET_HOME|g" "$TARGET_HOME/.local/share/applications/piterm.desktop"
 as_user update-desktop-database "$TARGET_HOME/.local/share/applications" 2>/dev/null || true
 
 # ── 6. Labwc hooks: restore-on-boot + PiTerm maximize rule ───────
