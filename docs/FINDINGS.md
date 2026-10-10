@@ -202,3 +202,16 @@ timeout 10s, lỗi non-fatal, không block wake. Recover flicker: nút màn / SW
   VDD_CORE ở idle/sleep — VDD_CORE sleep vẫn 1019mW, là mục tiêu lớn nhất còn lại.
 - Lưu ý đo: tổng PMIC rails ≠ dòng pin (thiếu backlight/carrier/converter loss).
   Backlight vẫn phải tắt bằng nút hardware.
+
+## Thermal under light desktop load (2026-10-10)
+- Symptom: 62-70°C with only the AI gateway + chromium running.
+- `ondemand` jumped to 2.4GHz on every burst. `schedutil` + a temperature-stepped
+  `scaling_max_freq` cap (pi-cooler) keep it at 1.5-1.8GHz (core 0.86V) with no
+  noticeable UI slowdown. 1.5GHz is the CM5 floor; it cannot go lower.
+- pwm-fan on this kernel reports `pwm1_enable=1` while it IS under thermal
+  control (cur_state 2 ↔ pwm 145 = curve speed). Detect a manual override as
+  `pwm1 != curve speed for cur_state`, not via pwm1_enable.
+- **wf-panel-pi `cputemp` widget**: its graph redraw burned ~55% of one core
+  continuously (almost no syscalls, pure rendering). Removing it from
+  `widgets_right` dropped the panel to ~3% and the SoC ~4-5°C. Biggest single win.
+- `ps %CPU` is a lifetime average — use /proc stat deltas for live numbers.

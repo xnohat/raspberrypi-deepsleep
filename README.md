@@ -67,7 +67,7 @@ runtime estimates (fed by the always-on battery-logger service);
 **settings** — wifi/fan/watchdog/button-hold, applied live. Privileged
 writes go through a narrow validated sudo helper with config backups.
 
-### 4b. Pi Cooler (always-on cooling daemon)
+### 4b. Pi Cooler (always-on cooling daemon + "Pi Cooler" app)
 `pi-cooler.service` keeps the SoC cool under light desktop load (AI gateway +
 chromium used to idle at 62-70°C):
 - `schedutil` governor instead of `ondemand` (no pointless 2.4GHz spikes)
@@ -77,6 +77,22 @@ chromium used to idle at 62-70°C):
 - profiles: **balanced** (default) · **cool** · **silent** · **off**, switchable
   from the ❄️ Cool tab in Pi Power (`/etc/pi-cooler.conf`)
 - pauses itself during deep sleep
+- profile changes apply live within 3s (no reboot); only editing the fan
+  curve (Fan tab) needs a reboot
+- "Pi Cooler" app in the menu (System Tools) opens straight to the Cool tab,
+  with live per-process CPU to spot what is heating the device
+
+| Profile | CPU cap | Fan |
+|---|---|---|
+| balanced | 2.4GHz, steps to 2.1/1.8/1.5 at 65/70/76°C | stock curve |
+| cool | 2.0GHz, steps to 1.8/1.6/1.5 at 60/66/72°C | starts 7°C earlier |
+| silent | 1.8GHz, steps to 1.6/1.5 at 55/60°C | starts 3°C later |
+| off | stock (ondemand, 2.4GHz) | stock |
+
+> 💡 Biggest real-world win on HackberryPi: the stock taskbar **cputemp**
+> widget redraws constantly and burned ~55% of a core. Removing `cputemp`
+> from `widgets_right` in `~/.config/wf-panel-pi.ini` dropped the panel to ~3%
+> and the SoC by ~4-5°C. See docs/FINDINGS.md.
 
 ### 5. Power button daemon
 evdev-based (`pwr_button` device, exclusive grab — replaces acpid/logind
@@ -87,6 +103,13 @@ handling):
 - autorepeat ignored, per-press debounce, dispatch lock
 - state machine covered by an automated uinput test (`test-btn-daemon.py`)
 
+## Requirements
+
+- Raspberry Pi OS **Bookworm** (64-bit) with the **labwc** Wayland desktop
+- HackberryPi CM5 (other Pi 5 / CM5 boards work; battery features need a
+  `power_supply/battery` device, fan features need `pwm-fan`)
+- `sudo` access; internet for apt dependencies
+
 ## Install
 
 ```bash
@@ -96,7 +119,9 @@ sudo ./install.sh     # installs deps + everything, idempotent
 sudo ./doctor.sh      # verify health anytime
 ```
 
-Uninstall: `sudo ./uninstall.sh` (restores stock button behavior).
+Update: `git pull && sudo ./install.sh` (safe to re-run).
+Uninstall: `sudo ./uninstall.sh` (restores stock button behavior, governor
+and max CPU frequency).
 
 ## Usage
 
@@ -108,6 +133,9 @@ Uninstall: `sudo ./uninstall.sh` (restores stock button behavior).
 | Screen button, tap | backlight on/off (hardware) |
 | Screen button, **hold** | cycle brightness levels (hardware) |
 | PiTerm right-click | context menu |
+| Menu → System Tools → **Pi Cooler** | pick cooling profile, see hot processes |
+| Menu → Preferences → **Pi Power** | fan curve, battery stats, sleep settings |
+| `cat /run/pi-cooler.status` | current profile / temp / CPU cap / fan state |
 
 ## Repository layout
 
@@ -118,6 +146,9 @@ powerbtn-deepsleep.sh                   deep sleep enter/exit
 fastboot-save.sh / fastboot-restore.sh  session save / boot-time restore
 tmux-state.py                           tmux manifest save/restore engine
 battery-logger.sh                       per-minute battery drain logger
+pi-cooler.py (+.service)                cooling daemon (cpufreq cap + fan re-seed)
+ui/                                     Pi Power / Pi Cooler GUI, sudo helper, icons
+battery-percent-plugin/                 patched wf-panel battery widget (% + charging)
 test-btn-daemon.py                      automated daemon state-machine test
 terminal/                               PiTerm configs (foot, tmux, launcher)
 docs/FINDINGS.md                        full research log of this device

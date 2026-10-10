@@ -63,6 +63,29 @@ kèm test nghe thử từng mức, hoặc mode manual kéo slider tốc độ c�
 **cấu hình** — wifi/quạt/watchdog/thời gian giữ nút, lưu ăn ngay.
 Ghi hệ thống qua sudo helper hẹp quyền có validate + backup.
 
+### 4b. Pi Cooler (daemon làm mát chạy nền + app "Pi Cooler")
+`pi-cooler.service` giữ máy mát khi chỉ chạy nhẹ (AI gateway + chromium
+trước đây treo 62-70°C):
+- governor `schedutil` thay `ondemand` (không vọt 2.4GHz vô ích)
+- giới hạn xung CPU theo nhiệt độ, có hysteresis
+- re-seed trạng thái quạt mỗi 3s để quạt không kẹt giữa các trip point
+  (không đụng khi quạt đang chỉnh tay)
+- tự tạm dừng khi deep sleep
+- đổi profile áp dụng ngay trong ~3s, không cần reboot (chỉ sửa fan curve mới cần)
+- app **Pi Cooler** trong menu (System Tools) mở thẳng tab Cool, xem CPU
+  từng tiến trình theo thời gian thực để biết cái gì làm nóng máy
+
+| Profile | Giới hạn CPU | Quạt |
+|---|---|---|
+| balanced | 2.4GHz, hạ 2.1/1.8/1.5 ở 65/70/76°C | curve gốc |
+| cool | 2.0GHz, hạ 1.8/1.6/1.5 ở 60/66/72°C | chạy sớm hơn 7°C |
+| silent | 1.8GHz, hạ 1.6/1.5 ở 55/60°C | chạy trễ hơn 3°C |
+| off | như gốc (ondemand, 2.4GHz) | gốc |
+
+> 💡 Hiệu quả nhất thực tế: widget **cputemp** trên taskbar vẽ lại liên tục,
+> đốt ~55% một core. Bỏ `cputemp` khỏi `widgets_right` trong
+> `~/.config/wf-panel-pi.ini` → panel còn ~3%, máy mát thêm ~4-5°C.
+
 ### 5. Daemon nút nguồn
 Chạy evdev (device `pwr_button`, grab độc quyền — thay thế acpid/logind):
 - nhấn ngắn → toggle deep sleep
@@ -70,6 +93,13 @@ Chạy evdev (device `pwr_button`, grab độc quyền — thay thế acpid/logi
   tay, và nhanh hơn ngưỡng cắt nguồn cứng PMIC)
 - bỏ qua autorepeat, debounce từng cú nhấn, khoá dispatch
 - state machine có test tự động bằng uinput (`test-btn-daemon.py`)
+
+## Yêu cầu
+
+- Raspberry Pi OS **Bookworm** (64-bit), desktop Wayland **labwc**
+- HackberryPi CM5 (Pi 5 / CM5 khác vẫn chạy; tính năng pin cần
+  `power_supply/battery`, quạt cần `pwm-fan`)
+- quyền `sudo`, có internet để cài apt
 
 ## Cài đặt
 
@@ -80,7 +110,8 @@ sudo ./install.sh     # cài deps + tất cả, chạy lại nhiều lần vô h
 sudo ./doctor.sh      # kiểm tra sức khoẻ bất cứ lúc nào
 ```
 
-Gỡ: `sudo ./uninstall.sh` (trả nút nguồn về mặc định).
+Cập nhật: `git pull && sudo ./install.sh` (chạy lại vô hại).
+Gỡ: `sudo ./uninstall.sh` (trả nút nguồn, governor và xung CPU về mặc định).
 
 ## Cách dùng
 
@@ -92,10 +123,26 @@ Gỡ: `sudo ./uninstall.sh` (trả nút nguồn về mặc định).
 | Nút màn hình, tap | bật/tắt đèn nền (hardware) |
 | Nút màn hình, **giữ** | xoay vòng mức sáng (hardware) |
 | PiTerm chuột phải | menu ngữ cảnh |
+| Menu → System Tools → **Pi Cooler** | chọn profile làm mát, xem tiến trình nóng |
+| Menu → Preferences → **Pi Power** | fan curve, pin, cài đặt sleep |
+| `cat /run/pi-cooler.status` | profile / nhiệt / giới hạn CPU / quạt hiện tại |
 
 ## Cấu trúc repo
 
-Xem README.md (EN). Docs nghiên cứu: `docs/FINDINGS.vi.md`,
+```
+install.sh / doctor.sh / uninstall.sh   cài đặt + kiểm tra
+powerbtn-daemon.py (+.service)          xử lý nhấn/giữ nút nguồn
+powerbtn-deepsleep.sh                   vào/ra deep sleep
+fastboot-save.sh / fastboot-restore.sh  lưu phiên / khôi phục khi boot
+tmux-state.py                           engine lưu/khôi phục tmux
+battery-logger.sh                       log tiêu thụ pin mỗi phút
+pi-cooler.py (+.service)                daemon làm mát
+ui/                                     GUI Pi Power / Pi Cooler, sudo helper, icon
+battery-percent-plugin/                 widget pin taskbar đã patch (% + sạc)
+terminal/                               cấu hình PiTerm (foot, tmux, launcher)
+```
+
+Docs nghiên cứu: `docs/FINDINGS.vi.md`,
 schematic: `docs/Schematic_HackberryPi_CM5_Q20.pdf`.
 
 ## Đóng góp upstream
